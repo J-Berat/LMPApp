@@ -1,0 +1,86 @@
+name: GIF Maker - Build
+
+# Ce fichier doit vivre à la RACINE du dépôt (.github/workflows/), même si
+# le code de l'application est dans le sous-dossier "GIF Maker/" — GitHub
+# Actions n'exécute que les workflows placés à la racine du dépôt.
+# Toutes les commandes ci-dessous s'exécutent donc dans ce sous-dossier
+# grâce à `defaults.run.working-directory`.
+
+on:
+  push:
+    tags:
+      - "gif-maker-v*"
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    working-directory: "GIF Maker"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Compiler (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          chmod +x scripts/build_mac.sh
+          ./scripts/build_mac.sh
+          cd dist && zip -r "GIF-Maker-macOS.zip" "GIF Maker.app"
+
+      - name: Compiler (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          chmod +x scripts/build_linux.sh
+          ./scripts/build_linux.sh
+          cd dist && zip -j "GIF-Maker-Linux.zip" "GIF Maker"
+
+      - name: Compiler (Windows)
+        if: matrix.platform == 'windows'
+        shell: cmd
+        run: |
+          call scripts\build_windows.bat
+          powershell -Command "Compress-Archive -Path 'dist\GIF Maker.exe' -DestinationPath 'dist\GIF-Maker-Windows.zip'"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gif-maker-${{ matrix.platform }}
+          path: "GIF Maker/dist/GIF-Maker-${{ matrix.platform == 'macos' && 'macOS' || matrix.platform == 'linux' && 'Linux' || 'Windows' }}.zip"
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publier la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*/*.zip
+          generate_release_notes: true

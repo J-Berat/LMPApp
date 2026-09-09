@@ -82,7 +82,7 @@ class SessionDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Edit session" if session else "Add session")
+        self.setWindowTitle("Edit session" if session and session.id is not None else "Add session")
         self.setMinimumWidth(480)
         self._speakers = speakers
 

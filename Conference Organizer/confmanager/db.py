@@ -6,11 +6,12 @@ no sync. The file can be backed up or copied manually like any document.
 
 from __future__ import annotations
 
+import calendar
 import os
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 SPEAKER_STATUSES = ["proposed", "contacted", "confirmed", "declined"]
 SESSION_STATUSES = ["scheduled", "completed", "cancelled"]
@@ -48,6 +49,25 @@ CREATE TABLE IF NOT EXISTS sessions (
 MIGRATIONS = [
     ("sessions", "room", "TEXT DEFAULT ''"),
 ]
+
+
+def add_one_month(date_str: str) -> str:
+    """Return `date_str` (YYYY-MM-DD) shifted forward by one calendar month.
+
+    Clamps to the last valid day of the target month (e.g. Jan 31 -> Feb 28
+    or 29). Returns "" if `date_str` doesn't parse - used when duplicating a
+    session to suggest "same slot, next month" without guessing wrong.
+    """
+    try:
+        d = datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    month = d.month + 1
+    year = d.year + (month - 1) // 12
+    month = (month - 1) % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(d.day, last_day)
+    return date(year, month, day).isoformat()
 
 
 def default_db_path(app_name: str = "Conference Organizer") -> str:

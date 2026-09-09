@@ -1,8 +1,8 @@
-"""Export de la séquence d'images en vidéo MP4 (via imageio + ffmpeg embarqué).
+"""Export the image sequence as an MP4 video (via imageio + bundled ffmpeg).
 
-Utilise imageio-ffmpeg, qui télécharge/embarque un binaire ffmpeg indépendant
-du système : le rendu MP4 fonctionne de la même façon sur macOS, Windows et
-Linux sans installation supplémentaire.
+Uses imageio-ffmpeg, which bundles a standalone ffmpeg binary that does not
+depend on the system: MP4 rendering works the same way on macOS, Windows
+and Linux with no extra installation.
 """
 
 from __future__ import annotations
@@ -34,18 +34,18 @@ def _load_frame_array(path: str, settings: GIFSettings, target_size: tuple[int, 
 
 
 def _even(n: int) -> int:
-    # Les encodeurs H.264 exigent des dimensions paires.
+    # H.264 encoders require even dimensions.
     return n if n % 2 == 0 else n + 1
 
 
 def export_mp4(image_paths: list[str], output_path: str, settings: GIFSettings) -> None:
-    """Exporte les images en vidéo MP4 (H.264)."""
+    """Export the images as an MP4 video (H.264)."""
     if not image_paths:
-        raise ExportError("Ajoutez au moins une image avant d'exporter.")
+        raise ExportError("Add at least one image before exporting.")
 
-    # Détermine la taille cible à partir de la première image si aucun
-    # redimensionnement n'est demandé, pour que toutes les frames soient
-    # homogènes (obligatoire pour l'encodage vidéo).
+    # Determine the target size from the first image when no resizing is
+    # requested, so all frames end up with matching dimensions (required
+    # for video encoding).
     first = Image.open(image_paths[0])
     first = ImageOps.exif_transpose(first).convert("RGB")
     if settings.resize_enabled:
@@ -64,7 +64,7 @@ def export_mp4(image_paths: list[str], output_path: str, settings: GIFSettings) 
             arr = padded
         frames.append(arr)
 
-    # Toutes les frames doivent avoir la même taille pour l'encodeur vidéo.
+    # All frames must share the same size for the video encoder.
     ref_shape = frames[0].shape
     for i, arr in enumerate(frames):
         if arr.shape != ref_shape:

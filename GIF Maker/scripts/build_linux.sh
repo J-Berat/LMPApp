@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Compile GIF Maker en exécutable Linux autonome.
-# À exécuter sur Linux, avec Python 3.10+ et les dépendances installées :
+# Build GIF Maker as a standalone Linux executable.
+# Run this on Linux, with Python 3.10+ and the dependencies installed:
 #   pip install -r requirements.txt pyinstaller
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,4 +11,4 @@ pyinstaller --noconfirm --clean --onefile --name "GIF Maker" \
     --collect-all imageio \
     main.py
 
-echo "Exécutable créé dans dist/GIF Maker"
+echo "Executable created at dist/GIF Maker"

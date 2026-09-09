@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point d'entrée de GIF Maker."""
+"""GIF Maker entry point."""
 
 from gifmaker.main_window import run
 

@@ -1,4 +1,4 @@
-"""Export de la séquence d'images en GIF animé (via Pillow)."""
+"""Export the image sequence as an animated GIF (via Pillow)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from .model import GIFSettings
 
 
 class ExportError(Exception):
-    """Erreur levée lorsque l'export ne peut pas être réalisé."""
+    """Raised when the export cannot be performed."""
 
 
 def _load_and_prepare(path: str, settings: GIFSettings) -> Image.Image:
     img = Image.open(path)
-    img = ImageOps.exif_transpose(img)  # respecte l'orientation EXIF
+    img = ImageOps.exif_transpose(img)  # respect EXIF orientation
     img = img.convert("RGBA")
 
     if settings.resize_enabled:
@@ -28,16 +28,16 @@ def _load_and_prepare(path: str, settings: GIFSettings) -> Image.Image:
 
 
 def export_gif(image_paths: list[str], output_path: str, settings: GIFSettings) -> None:
-    """Exporte les images en GIF animé.
+    """Export the images as an animated GIF.
 
-    Lève ExportError si la liste d'images est vide.
+    Raises ExportError if the image list is empty.
     """
     if not image_paths:
-        raise ExportError("Ajoutez au moins une image avant d'exporter.")
+        raise ExportError("Add at least one image before exporting.")
 
     frames = [_load_and_prepare(p, settings) for p in image_paths]
 
-    # Une palette commune évite les scintillements de couleurs entre les frames.
+    # A shared palette avoids color flicker between frames.
     converted = [f.convert("P", palette=Image.ADAPTIVE, colors=256) for f in frames]
 
     converted[0].save(

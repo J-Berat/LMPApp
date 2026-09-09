@@ -1,6 +1,6 @@
-"""GIF Maker - créateur de GIF et MP4 à partir d'une séquence d'images.
+"""GIF Maker - create animated GIFs and MP4 videos from a sequence of images.
 
-Application de bureau multiplateforme (macOS, Windows, Linux).
+Cross-platform desktop application (macOS, Windows, Linux).
 """
 
 __version__ = "2.0.0"

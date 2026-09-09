@@ -1,6 +1,6 @@
 @echo off
-REM Compile GIF Maker en .exe autonome pour Windows.
-REM A executer sur Windows, avec Python 3.10+ et les dependances installees :
+REM Build GIF Maker as a standalone Windows .exe.
+REM Run this on Windows, with Python 3.10+ and the dependencies installed:
 REM   pip install -r requirements.txt pyinstaller
 cd /d "%~dp0\.."
 
@@ -10,4 +10,4 @@ pyinstaller --noconfirm --clean --windowed --onefile --name "GIF Maker" ^
     --collect-all imageio ^
     main.py
 
-echo Executable cree dans dist\GIF Maker.exe
+echo Executable created at dist\GIF Maker.exe

@@ -1,4 +1,4 @@
-"""Interface graphique PySide6 de GIF Maker."""
+"""PySide6 graphical interface for GIF Maker."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _is_image_file(path: str) -> bool:
 
 
 class ImageListWidget(QListWidget):
-    """Liste réordonnable des images de la séquence, avec glisser-déposer."""
+    """Reorderable list of the images in the sequence, with drag & drop support."""
 
     filesDropped = Signal(list)
     orderChanged = Signal()
@@ -79,7 +79,7 @@ class ImageListWidget(QListWidget):
 
 
 class PreviewWidget(QWidget):
-    """Aperçu animé de la séquence, avec lecture/pause."""
+    """Animated preview of the sequence, with play/pause."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -88,7 +88,7 @@ class PreviewWidget(QWidget):
         self._index = 0
         self._playing = True
 
-        self.image_label = QLabel("Ajoutez des images pour voir l'aperçu")
+        self.image_label = QLabel("Add images to see the preview")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(320, 320)
         self.image_label.setStyleSheet("QLabel { background: #202020; color: #aaaaaa; border-radius: 6px; }")
@@ -113,7 +113,7 @@ class PreviewWidget(QWidget):
 
     def toggle_play(self) -> None:
         self._playing = not self._playing
-        self.play_button.setText("⏸ Pause" if self._playing else "▶ Lire")
+        self.play_button.setText("⏸ Pause" if self._playing else "▶ Play")
         if self._playing:
             self.timer.start(self._delay_ms)
         else:
@@ -125,7 +125,7 @@ class PreviewWidget(QWidget):
         self._index = 0
         self.timer.stop()
         if not paths:
-            self.image_label.setText("Ajoutez des images pour voir l'aperçu")
+            self.image_label.setText("Add images to see the preview")
             self.image_label.setPixmap(QPixmap())
             self.frame_label.setText("")
             return
@@ -147,18 +147,18 @@ class PreviewWidget(QWidget):
                 self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             self.image_label.setPixmap(scaled)
-        self.frame_label.setText(f"Image {self._index + 1} / {len(self._paths)}")
+        self.frame_label.setText(f"Frame {self._index + 1} / {len(self._paths)}")
 
 
 class SettingsPanel(QWidget):
-    """Réglages de redimensionnement, cadence et bouclage."""
+    """Resizing, timing and looping settings."""
 
     settingsEdited = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        timing_box = QGroupBox("Cadence")
+        timing_box = QGroupBox("Timing")
         self.delay_spin = QSpinBox()
         self.delay_spin.setRange(20, 5000)
         self.delay_spin.setSingleStep(10)
@@ -166,15 +166,15 @@ class SettingsPanel(QWidget):
         self.delay_spin.setValue(200)
         self.delay_spin.valueChanged.connect(self.settingsEdited)
 
-        self.loop_check = QCheckBox("Boucle infinie")
+        self.loop_check = QCheckBox("Loop forever")
         self.loop_check.setChecked(True)
         self.loop_check.stateChanged.connect(self.settingsEdited)
 
         timing_form = QFormLayout(timing_box)
-        timing_form.addRow("Délai entre les images :", self.delay_spin)
+        timing_form.addRow("Delay between frames:", self.delay_spin)
         timing_form.addRow(self.loop_check)
 
-        resize_box = QGroupBox("Redimensionner")
+        resize_box = QGroupBox("Resize")
         resize_box.setCheckable(True)
         resize_box.setChecked(False)
         resize_box.toggled.connect(self.settingsEdited)
@@ -190,13 +190,13 @@ class SettingsPanel(QWidget):
         self.height_spin.setValue(480)
         self.height_spin.valueChanged.connect(self.settingsEdited)
 
-        self.keep_aspect_check = QCheckBox("Conserver les proportions")
+        self.keep_aspect_check = QCheckBox("Keep aspect ratio")
         self.keep_aspect_check.setChecked(True)
         self.keep_aspect_check.stateChanged.connect(self.settingsEdited)
 
         resize_form = QFormLayout(resize_box)
-        resize_form.addRow("Largeur :", self.width_spin)
-        resize_form.addRow("Hauteur :", self.height_spin)
+        resize_form.addRow("Width:", self.width_spin)
+        resize_form.addRow("Height:", self.height_spin)
         resize_form.addRow(self.keep_aspect_check)
 
         layout = QVBoxLayout(self)
@@ -216,7 +216,7 @@ class SettingsPanel(QWidget):
 
 
 class ExportThread(QThread):
-    """Exécute l'export dans un thread pour ne pas geler l'interface."""
+    """Runs the export in a background thread so the UI never freezes."""
 
     finished_ok = Signal(str)
     failed = Signal(str)
@@ -236,8 +236,8 @@ class ExportThread(QThread):
                 export_mp4(self.paths, self.output_path, self.settings)
         except ExportError as exc:
             self.failed.emit(str(exc))
-        except Exception as exc:  # pragma: no cover - filet de sécurité pour l'UI
-            self.failed.emit(f"Échec de l'export : {exc}")
+        except Exception as exc:  # pragma: no cover - safety net for the UI
+            self.failed.emit(f"Export failed: {exc}")
         else:
             self.finished_ok.emit(self.output_path)
 
@@ -257,37 +257,37 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self.setStatusBar(QStatusBar())
 
-    # -- Construction de l'interface -----------------------------------------------
+    # -- Building the interface -----------------------------------------------
 
     def _build_ui(self) -> None:
-        # Panneau de gauche : liste d'images
+        # Left panel: image list
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(QLabel("Images (glisser-déposer ou bouton Ajouter)"))
+        left_layout.addWidget(QLabel("Images (drag & drop, or use the Add button)"))
 
         self.list_widget = ImageListWidget()
         left_layout.addWidget(self.list_widget, 1)
 
         buttons_row = QHBoxLayout()
-        self.add_button = QPushButton("Ajouter…")
-        self.remove_button = QPushButton("Retirer")
-        self.clear_button = QPushButton("Tout effacer")
+        self.add_button = QPushButton("Add…")
+        self.remove_button = QPushButton("Remove")
+        self.clear_button = QPushButton("Clear all")
         buttons_row.addWidget(self.add_button)
         buttons_row.addWidget(self.remove_button)
         buttons_row.addWidget(self.clear_button)
         left_layout.addLayout(buttons_row)
 
-        # Centre : aperçu
+        # Center: preview
         self.preview = PreviewWidget()
 
-        # Droite : réglages + export
+        # Right: settings + export
         right = QWidget()
         right_layout = QVBoxLayout(right)
         self.settings_panel = SettingsPanel()
         right_layout.addWidget(self.settings_panel)
 
-        self.export_gif_button = QPushButton("Exporter en GIF…")
-        self.export_mp4_button = QPushButton("Exporter en MP4…")
+        self.export_gif_button = QPushButton("Export as GIF…")
+        self.export_mp4_button = QPushButton("Export as MP4…")
         right_layout.addWidget(self.export_gif_button)
         right_layout.addWidget(self.export_mp4_button)
         right_layout.addStretch(1)
@@ -318,7 +318,7 @@ class MainWindow(QMainWindow):
         self.model.images_changed.connect(self._refresh_preview)
         self.model.settings_changed.connect(self._refresh_preview)
 
-    # -- Glisser-déposer sur la fenêtre entière --------------------------------------
+    # -- Drag & drop onto the whole window --------------------------------------
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -330,12 +330,12 @@ class MainWindow(QMainWindow):
             paths = [p for p in paths if _is_image_file(p)]
             self._add_images(paths)
 
-    # -- Actions sur la liste ---------------------------------------------------------
+    # -- List actions ---------------------------------------------------------
 
     def _choose_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Choisissez des images",
+            "Choose images",
             "",
             "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.webp)",
         )
@@ -359,7 +359,7 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         menu = QMenu(self)
-        remove_action = QAction("Retirer", self)
+        remove_action = QAction("Remove", self)
         remove_action.triggered.connect(lambda: self.model.remove_images([item.data(Qt.UserRole)]))
         menu.addAction(remove_action)
         menu.exec(self.list_widget.mapToGlobal(pos))
@@ -398,22 +398,22 @@ class MainWindow(QMainWindow):
     def _export(self, kind: str) -> None:
         if not self.model.images:
             QMessageBox.warning(
-                self, "Impossible d'exporter", "Ajoutez au moins une image avant d'exporter."
+                self, "Cannot export", "Add at least one image before exporting."
             )
             return
 
         if kind == "gif":
             path, _ = QFileDialog.getSaveFileName(
-                self, "Choisissez le nom et l'emplacement du fichier GIF", "animation.gif", "GIF (*.gif)"
+                self, "Choose a name and location for the GIF file", "animation.gif", "GIF (*.gif)"
             )
         else:
             path, _ = QFileDialog.getSaveFileName(
-                self, "Choisissez le nom et l'emplacement du fichier MP4", "animation.mp4", "Vidéo MP4 (*.mp4)"
+                self, "Choose a name and location for the MP4 file", "animation.mp4", "MP4 video (*.mp4)"
             )
         if not path:
             return
 
-        self._progress = QProgressDialog(f"Export {kind.upper()} en cours…", None, 0, 0, self)
+        self._progress = QProgressDialog(f"Exporting {kind.upper()}…", None, 0, 0, self)
         self._progress.setWindowModality(Qt.WindowModal)
         self._progress.setCancelButton(None)
         self._progress.show()
@@ -426,13 +426,13 @@ class MainWindow(QMainWindow):
     def _on_export_success(self, path: str) -> None:
         if self._progress:
             self._progress.close()
-        self.statusBar().showMessage(f"Exporté : {path}", 5000)
-        QMessageBox.information(self, "Export terminé", f"Fichier créé :\n{path}")
+        self.statusBar().showMessage(f"Exported: {path}", 5000)
+        QMessageBox.information(self, "Export complete", f"File created:\n{path}")
 
     def _on_export_failed(self, message: str) -> None:
         if self._progress:
             self._progress.close()
-        QMessageBox.critical(self, "Échec de l'export", message)
+        QMessageBox.critical(self, "Export failed", message)
 
 
 def run() -> None:

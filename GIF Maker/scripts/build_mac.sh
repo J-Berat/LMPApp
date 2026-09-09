@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Compile GIF Maker en application macOS autonome (.app).
-# À exécuter sur un Mac, avec Python 3.10+ et les dépendances installées :
+# Build GIF Maker as a standalone macOS application (.app).
+# Run this on a Mac, with Python 3.10+ and the dependencies installed:
 #   pip install -r requirements.txt pyinstaller
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,4 +11,4 @@ pyinstaller --noconfirm --clean --windowed --name "GIF Maker" \
     --collect-all imageio \
     main.py
 
-echo "Application créée dans dist/GIF Maker.app"
+echo "Application created at dist/GIF Maker.app"

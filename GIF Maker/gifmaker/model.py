@@ -1,4 +1,4 @@
-"""Modèle de données : liste d'images et réglages d'export."""
+"""Data model: the image sequence and export settings."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, Signal
 
 @dataclass
 class ImageItem:
-    """Une image de la séquence, avec un identifiant stable pour le réordonnancement."""
+    """A single image in the sequence, with a stable id used for reordering."""
 
     path: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -23,13 +23,13 @@ class ImageItem:
 
 @dataclass
 class GIFSettings:
-    """Réglages d'export, communs au GIF et au MP4."""
+    """Export settings, shared by the GIF and MP4 exporters."""
 
-    # Délai entre deux images, en millisecondes (équivalent de l'ancien "Stepper" fps).
+    # Delay between two frames, in milliseconds (replaces the old "fps stepper").
     frame_delay_ms: int = 200
-    # Nombre de boucles pour le GIF. 0 = boucle infinie.
+    # Number of loops for the GIF. 0 means infinite loop.
     loop_count: int = 0
-    # Redimensionnement optionnel.
+    # Optional resizing.
     resize_enabled: bool = False
     resize_width: int = 480
     resize_height: int = 480
@@ -43,7 +43,7 @@ class GIFSettings:
 
 
 class GIFMakerModel(QObject):
-    """État de l'application : la séquence d'images en cours d'édition et les réglages."""
+    """Application state: the image sequence being edited and its settings."""
 
     images_changed = Signal()
     settings_changed = Signal()
@@ -53,7 +53,7 @@ class GIFMakerModel(QObject):
         self.images: list[ImageItem] = []
         self.settings = GIFSettings()
 
-    # -- Gestion de la liste d'images -------------------------------------------------
+    # -- Managing the image list -------------------------------------------------
 
     def add_images(self, paths: list[str]) -> None:
         added = False
@@ -92,7 +92,7 @@ class GIFMakerModel(QObject):
     def image_paths(self) -> list[str]:
         return [item.path for item in self.images]
 
-    # -- Réglages -----------------------------------------------------------------------
+    # -- Settings -----------------------------------------------------------------------
 
     def update_settings(self, **kwargs) -> None:
         for key, value in kwargs.items():

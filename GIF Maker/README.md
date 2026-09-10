@@ -7,7 +7,7 @@ same way on **macOS, Windows and Linux**.
 
 No technical knowledge or Python installation required:
 
-1. Go to the **[Releases](../../releases)** tab of this repository.
+1. Go to the **[Releases](../releases)** tab of this repository.
 2. Download the file for your system:
    - **macOS**: `GIF-Maker-macOS.zip` → unzip, then drag `GIF Maker.app` into your Applications folder.
    - **Windows**: `GIF-Maker-Windows.zip` → unzip, then double-click `GIF Maker.exe`.

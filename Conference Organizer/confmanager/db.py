@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import calendar
 import os
+import shutil
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -15,6 +16,10 @@ from datetime import date, datetime, timezone
 
 SPEAKER_STATUSES = ["proposed", "contacted", "confirmed", "declined"]
 SESSION_STATUSES = ["scheduled", "completed", "cancelled"]
+
+# How many timestamped backups (see ConferenceDB._backup_existing_file) to
+# keep before pruning the oldest ones.
+BACKUP_RETENTION = 20
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS speakers (
@@ -48,6 +53,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 # Applied with ALTER TABLE on existing databases that predate them.
 MIGRATIONS = [
     ("sessions", "room", "TEXT DEFAULT ''"),
+    ("sessions", "category", "TEXT DEFAULT ''"),
 ]
 
 
@@ -104,6 +110,7 @@ class Session:
     authors: str = ""
     abstract: str = ""
     room: str = ""
+    category: str = ""
     status: str = "scheduled"
     recording_url: str = ""
     slides_url: str = ""
@@ -125,6 +132,7 @@ class ConferenceDB:
 
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = db_path or default_db_path()
+        self._backup_existing_file()
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
@@ -137,6 +145,55 @@ class ConferenceDB:
             existing = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _backup_existing_file(self) -> None:
+        """Copy the data file, if it already exists, into a timestamped
+        "backups" folder next to it before this session touches it - a
+        cheap safety net against an accidental delete or bad edit. Skips
+        silently if a backup was already made in roughly the last hour
+        (repeated app restarts shouldn't pile up near-duplicate copies),
+        and never blocks startup if anything goes wrong."""
+        if not os.path.isfile(self.db_path):
+            return  # nothing to protect yet - first launch
+
+        backups_dir = os.path.join(os.path.dirname(self.db_path), "backups")
+        try:
+            os.makedirs(backups_dir, exist_ok=True)
+            existing = sorted(
+                f for f in os.listdir(backups_dir)
+                if f.startswith("conference_organizer_") and f.endswith(".sqlite3")
+            )
+        except OSError:
+            return
+
+        now = datetime.now()
+        if existing:
+            last_stamp = existing[-1][len("conference_organizer_"):-len(".sqlite3")]
+            try:
+                last_time = datetime.strptime(last_stamp, "%Y%m%d_%H%M%S")
+                if (now - last_time).total_seconds() < 3600:
+                    return
+            except ValueError:
+                pass
+
+        backup_name = f"conference_organizer_{now.strftime('%Y%m%d_%H%M%S')}.sqlite3"
+        backup_path = os.path.join(backups_dir, backup_name)
+        try:
+            shutil.copy2(self.db_path, backup_path)
+        except OSError:
+            return
+
+        self._prune_old_backups(backups_dir, existing + [backup_name])
+
+    @staticmethod
+    def _prune_old_backups(backups_dir: str, files: list[str]) -> None:
+        files = sorted(files)
+        excess = len(files) - BACKUP_RETENTION
+        for name in files[:max(0, excess)]:
+            try:
+                os.remove(os.path.join(backups_dir, name))
+            except OSError:
+                pass
 
     def close(self) -> None:
         self._conn.close()
@@ -167,16 +224,22 @@ class ConferenceDB:
         rows = self._conn.execute("SELECT * FROM speakers ORDER BY name COLLATE NOCASE").fetchall()
         return [Speaker(**{k: row[k] for k in row.keys()}) for row in rows]
 
+    def speaker_status_counts(self) -> dict[str, int]:
+        """Number of speakers per status (e.g. {'confirmed': 5, ...}).
+        Statuses with zero speakers are simply absent from the result."""
+        rows = self._conn.execute("SELECT status, COUNT(*) AS n FROM speakers GROUP BY status").fetchall()
+        return {row["status"]: row["n"] for row in rows}
+
     # -- Sessions -----------------------------------------------------------------
 
     def add_session(self, session: Session) -> int:
         cur = self._conn.execute(
             "INSERT INTO sessions (speaker_id, date, time, title, authors, abstract, room, "
-            "status, recording_url, slides_url, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "category, status, recording_url, slides_url, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session.speaker_id, session.date, session.time, session.title, session.authors,
-                session.abstract, session.room, session.status, session.recording_url,
-                session.slides_url, session.notes,
+                session.abstract, session.room, session.category, session.status,
+                session.recording_url, session.slides_url, session.notes,
             ),
         )
         self._conn.commit()
@@ -185,11 +248,11 @@ class ConferenceDB:
     def update_session(self, session: Session) -> None:
         self._conn.execute(
             "UPDATE sessions SET speaker_id=?, date=?, time=?, title=?, authors=?, abstract=?, "
-            "room=?, status=?, recording_url=?, slides_url=?, notes=? WHERE id=?",
+            "room=?, category=?, status=?, recording_url=?, slides_url=?, notes=? WHERE id=?",
             (
                 session.speaker_id, session.date, session.time, session.title, session.authors,
-                session.abstract, session.room, session.status, session.recording_url,
-                session.slides_url, session.notes, session.id,
+                session.abstract, session.room, session.category, session.status,
+                session.recording_url, session.slides_url, session.notes, session.id,
             ),
         )
         self._conn.commit()
@@ -211,6 +274,21 @@ class ConferenceDB:
             "SELECT DISTINCT room FROM sessions WHERE TRIM(room) != '' ORDER BY room COLLATE NOCASE"
         ).fetchall()
         return [row["room"] for row in rows]
+
+    def list_categories(self) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT category FROM sessions WHERE TRIM(category) != '' ORDER BY category COLLATE NOCASE"
+        ).fetchall()
+        return [row["category"] for row in rows]
+
+    def upcoming_session_count(self, today: str | None = None) -> int:
+        """Number of non-cancelled sessions on or after `today` (defaults to
+        the real current date)."""
+        today = today or date.today().isoformat()
+        return sum(
+            1 for s in self.list_sessions()
+            if s.date.strip() >= today and s.status != "cancelled"
+        )
 
     # -- Room conflicts -------------------------------------------------------------
 

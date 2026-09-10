@@ -14,7 +14,7 @@ from .db import Session, Speaker
 
 SPEAKER_FIELDS = ["name", "email", "affiliation", "status", "notes"]
 SESSION_FIELDS = [
-    "date", "time", "title", "room", "speaker", "authors", "abstract",
+    "date", "time", "title", "room", "category", "speaker", "authors", "abstract",
     "status", "recording_url", "slides_url", "notes",
 ]
 
@@ -86,6 +86,7 @@ def import_sessions_csv(path: str, speakers: list[Speaker]) -> list[Session]:
                     authors=(row.get("authors") or "").strip(),
                     abstract=(row.get("abstract") or "").strip(),
                     room=(row.get("room") or "").strip(),
+                    category=(row.get("category") or "").strip(),
                     status=(row.get("status") or "").strip() or "scheduled",
                     recording_url=(row.get("recording_url") or "").strip(),
                     slides_url=(row.get("slides_url") or "").strip(),

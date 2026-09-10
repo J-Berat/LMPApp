@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QInputDialog,
     QTableWidget,
     QTableWidgetItem,
     QAbstractItemView,
@@ -33,6 +34,7 @@ from .pdf_export import export_book_of_abstracts, ExportError
 from .calendar_tab import CalendarTab
 from .csv_io import export_speakers_csv, import_speakers_csv, export_sessions_csv, import_sessions_csv
 from .ical_export import export_session_ics, export_schedule_ics
+from .html_export import export_program_html
 
 CONFLICT_FG = QColor("#7a1f1f")
 
@@ -192,8 +194,10 @@ class SessionsTab(QWidget):
         super().__init__(parent)
         self.db = db
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Date", "Time", "Title", "Room", "Speaker", "Status"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(
+            ["Date", "Time", "Title", "Room", "Category", "Speaker", "Status"]
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -209,6 +213,7 @@ class SessionsTab(QWidget):
         duplicate_btn = QPushButton("Duplicate…")
         remove_btn = QPushButton("Delete session")
         export_btn = QPushButton("Export Book of Abstracts…")
+        export_html_btn = QPushButton("Export program (.html)…")
         export_ics_btn = QPushButton("Export calendar (.ics)…")
         export_csv_btn = QPushButton("Export CSV…")
         import_csv_btn = QPushButton("Import CSV…")
@@ -217,6 +222,7 @@ class SessionsTab(QWidget):
         duplicate_btn.clicked.connect(self.duplicate_selected)
         remove_btn.clicked.connect(self.remove_selected)
         export_btn.clicked.connect(self.export_book)
+        export_html_btn.clicked.connect(self.export_html_program)
         export_ics_btn.clicked.connect(self.export_ics_schedule)
         export_csv_btn.clicked.connect(self.export_csv)
         import_csv_btn.clicked.connect(self.import_csv)
@@ -230,6 +236,7 @@ class SessionsTab(QWidget):
         buttons.addWidget(import_csv_btn)
         buttons.addWidget(export_csv_btn)
         buttons.addWidget(export_ics_btn)
+        buttons.addWidget(export_html_btn)
         buttons.addWidget(export_btn)
 
         self.search_edit = QLineEdit()
@@ -253,7 +260,7 @@ class SessionsTab(QWidget):
 
         self.table.setRowCount(len(sessions))
         for row, s in enumerate(sessions):
-            values = [s.date, s.time, s.title, s.room, s.speaker_name, s.status]
+            values = [s.date, s.time, s.title, s.room, s.category, s.speaker_name, s.status]
             for col, value in enumerate(values):
                 item = self._item(value, s.id if col == 0 else None)
                 if s.id in conflict_ids:
@@ -326,7 +333,8 @@ class SessionsTab(QWidget):
     def add_session(self) -> None:
         speakers = self.db.list_speakers()
         rooms = self.db.list_rooms()
-        dialog = SessionDialog(speakers=speakers, rooms=rooms, parent=self)
+        categories = self.db.list_categories()
+        dialog = SessionDialog(speakers=speakers, rooms=rooms, categories=categories, parent=self)
         if dialog.exec():
             session = dialog.result_session()
             if self._warn_if_conflict(session, exclude_id=None):
@@ -342,7 +350,8 @@ class SessionsTab(QWidget):
             return
         speakers = self.db.list_speakers()
         rooms = self.db.list_rooms()
-        dialog = SessionDialog(speakers=speakers, rooms=rooms, session=session, parent=self)
+        categories = self.db.list_categories()
+        dialog = SessionDialog(speakers=speakers, rooms=rooms, categories=categories, session=session, parent=self)
         if dialog.exec():
             updated = dialog.result_session()
             if self._warn_if_conflict(updated, exclude_id=session_id):
@@ -352,8 +361,8 @@ class SessionsTab(QWidget):
     def duplicate_selected(self) -> None:
         """Open the Add session dialog pre-filled from the selected session,
         with the date advanced by one month - a quick way to create next
-        month's slot in a recurring series (same time/room/link, blank
-        title/speaker/abstract for the new talk)."""
+        month's slot in a recurring series (same time/room/category/link,
+        blank title/speaker/abstract for the new talk)."""
         session = self._selected_session()
         if session is None:
             return
@@ -366,6 +375,7 @@ class SessionsTab(QWidget):
             authors="",
             abstract="",
             room=session.room,
+            category=session.category,
             status="scheduled",
             recording_url=session.recording_url,
             slides_url="",
@@ -373,7 +383,8 @@ class SessionsTab(QWidget):
         )
         speakers = self.db.list_speakers()
         rooms = self.db.list_rooms()
-        dialog = SessionDialog(speakers=speakers, rooms=rooms, session=draft, parent=self)
+        categories = self.db.list_categories()
+        dialog = SessionDialog(speakers=speakers, rooms=rooms, categories=categories, session=draft, parent=self)
         if dialog.exec():
             new_session = dialog.result_session()
             if self._warn_if_conflict(new_session, exclude_id=None):
@@ -400,6 +411,22 @@ class SessionsTab(QWidget):
         except ExportError as exc:
             QMessageBox.warning(self, "Cannot export", str(exc))
             return
+        except Exception as exc:  # pragma: no cover - safety net for the UI
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        QMessageBox.information(self, "Export complete", f"File created:\n{path}")
+
+    def export_html_program(self) -> None:
+        title, ok = QInputDialog.getText(self, "Program title", "Title for the program page:", text="Program")
+        if not ok:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export program to an HTML page", "program.html", "HTML (*.html)"
+        )
+        if not path:
+            return
+        try:
+            export_program_html(self.db.list_sessions(), path, title=title.strip() or "Program")
         except Exception as exc:  # pragma: no cover - safety net for the UI
             QMessageBox.critical(self, "Export failed", str(exc))
             return
@@ -470,10 +497,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db = db
         self.setWindowTitle("Conference Organizer")
-        self.resize(1000, 640)
+        self.resize(1050, 680)
 
         self.next_session_label = QLabel("")
         self.next_session_label.setWordWrap(True)
+
+        self.stats_label = QLabel("")
+        self.stats_label.setWordWrap(True)
+        self.stats_label.setStyleSheet("padding: 4px 8px; color: #444444;")
 
         tabs = QTabWidget()
         self.speakers_tab = SpeakersTab(db)
@@ -483,16 +514,17 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.sessions_tab, "Sessions")
         tabs.addTab(self.calendar_tab, "Calendar")
 
-        # Any change to speakers or sessions can affect the other two tabs
-        # (a renamed speaker shows up in Sessions, a new session can create
-        # or resolve a room conflict shown in Sessions/Calendar, and either
-        # can change what "next session" is) - keep everything in sync by
-        # refreshing all of it together.
+        # Any change to speakers or sessions can affect the other tabs (a
+        # renamed speaker shows up in Sessions, a new session can create or
+        # resolve a room conflict shown in Sessions/Calendar, and either can
+        # change what "next session" and the stats are) - keep everything
+        # in sync by refreshing all of it together.
         def refresh_all():
             self.speakers_tab_refresh()
             self.sessions_tab_refresh()
             self.calendar_tab.refresh()
             self._update_next_session_banner()
+            self._update_stats()
 
         self.speakers_tab_refresh = self.speakers_tab.refresh
         self.sessions_tab_refresh = self.sessions_tab.refresh
@@ -502,6 +534,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         central_layout = QVBoxLayout(central)
         central_layout.addWidget(self.next_session_label)
+        central_layout.addWidget(self.stats_label)
         central_layout.addWidget(tabs)
         self.setCentralWidget(central)
 
@@ -509,6 +542,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Data file: {db.db_path}")
 
         self._update_next_session_banner()
+        self._update_stats()
 
     def _update_next_session_banner(self) -> None:
         today = date.today().isoformat()
@@ -533,6 +567,17 @@ class MainWindow(QMainWindow):
             self.next_session_label.setStyleSheet(
                 "padding: 8px; border-radius: 4px; background: #eeeeee; color: #555555;"
             )
+
+    def _update_stats(self) -> None:
+        counts = self.db.speaker_status_counts()
+        confirmed = counts.get("confirmed", 0)
+        pending = counts.get("proposed", 0) + counts.get("contacted", 0)
+        declined = counts.get("declined", 0)
+        upcoming = self.db.upcoming_session_count()
+        self.stats_label.setText(
+            f"Speakers — confirmed: {confirmed}  ·  pending: {pending}  ·  declined: {declined}"
+            f"        Upcoming sessions: {upcoming}"
+        )
 
 
 def run() -> None:

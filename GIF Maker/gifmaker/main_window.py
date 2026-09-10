@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
+
+from PIL import Image
 
 from PySide6.QtCore import Qt, QTimer, QSize, QThread, Signal
 from PySide6.QtGui import QPixmap, QIcon, QAction, QDragEnterEvent, QDropEvent
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QFormLayout,
     QSpinBox,
+    QComboBox,
     QCheckBox,
     QFileDialog,
     QMessageBox,
@@ -29,11 +33,14 @@ from PySide6.QtWidgets import (
     QProgressDialog,
 )
 
-from .model import GIFMakerModel
+from .model import GIFMakerModel, GIFSettings
 from .gif_exporter import export_gif, ExportError
 from .video_exporter import export_mp4
+from .video_import_dialog import VideoImportDialog
+from .crop_widget import CropDialog, apply_crop_to_images
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp")
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")
 THUMBNAIL_SIZE = QSize(72, 72)
 
 
@@ -41,10 +48,15 @@ def _is_image_file(path: str) -> bool:
     return path.lower().endswith(IMAGE_EXTENSIONS)
 
 
+def _is_video_file(path: str) -> bool:
+    return path.lower().endswith(VIDEO_EXTENSIONS)
+
+
 class ImageListWidget(QListWidget):
     """Reorderable list of the images in the sequence, with drag & drop support."""
 
     filesDropped = Signal(list)
+    videoDropped = Signal(str)
     orderChanged = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -70,9 +82,12 @@ class ImageListWidget(QListWidget):
     def dropEvent(self, event: QDropEvent) -> None:
         if event.mimeData().hasUrls():
             paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
-            paths = [p for p in paths if _is_image_file(p)]
-            if paths:
-                self.filesDropped.emit(paths)
+            images = [p for p in paths if _is_image_file(p)]
+            videos = [p for p in paths if _is_video_file(p)]
+            if images:
+                self.filesDropped.emit(images)
+            if videos:
+                self.videoDropped.emit(videos[0])  # one video import at a time
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
@@ -168,17 +183,29 @@ class SettingsPanel(QWidget):
 
         self.loop_check = QCheckBox("Loop forever")
         self.loop_check.setChecked(True)
-        self.loop_check.stateChanged.connect(self.settingsEdited)
+        self.loop_check.stateChanged.connect(self._on_loop_forever_toggled)
+
+        self.loop_count_spin = QSpinBox()
+        self.loop_count_spin.setRange(1, 100)
+        self.loop_count_spin.setValue(1)
+        self.loop_count_spin.setSuffix(" time(s)")
+        self.loop_count_spin.setEnabled(False)
+        self.loop_count_spin.valueChanged.connect(self.settingsEdited)
 
         timing_form = QFormLayout(timing_box)
         timing_form.addRow("Delay between frames:", self.delay_spin)
         timing_form.addRow(self.loop_check)
+        timing_form.addRow("Loop count:", self.loop_count_spin)
 
         resize_box = QGroupBox("Resize")
         resize_box.setCheckable(True)
         resize_box.setChecked(False)
         resize_box.toggled.connect(self.settingsEdited)
         self.resize_box = resize_box
+
+        self.resize_unit_combo = QComboBox()
+        self.resize_unit_combo.addItems(["Pixels", "Percentage"])
+        self.resize_unit_combo.currentIndexChanged.connect(self._on_resize_unit_changed)
 
         self.width_spin = QSpinBox()
         self.width_spin.setRange(1, 8000)
@@ -195,6 +222,7 @@ class SettingsPanel(QWidget):
         self.keep_aspect_check.stateChanged.connect(self.settingsEdited)
 
         resize_form = QFormLayout(resize_box)
+        resize_form.addRow("Unit:", self.resize_unit_combo)
         resize_form.addRow("Width:", self.width_spin)
         resize_form.addRow("Height:", self.height_spin)
         resize_form.addRow(self.keep_aspect_check)
@@ -204,15 +232,85 @@ class SettingsPanel(QWidget):
         layout.addWidget(resize_box)
         layout.addStretch(1)
 
+    def _on_loop_forever_toggled(self) -> None:
+        self.loop_count_spin.setEnabled(not self.loop_check.isChecked())
+        self.settingsEdited.emit()
+
+    def _on_resize_unit_changed(self) -> None:
+        is_percentage = self.resize_unit_combo.currentText() == "Percentage"
+        for spin in (self.width_spin, self.height_spin):
+            spin.blockSignals(True)
+        if is_percentage:
+            self.width_spin.setRange(1, 500)
+            self.height_spin.setRange(1, 500)
+            self.width_spin.setSuffix(" %")
+            self.height_spin.setSuffix(" %")
+            self.width_spin.setValue(100)
+            self.height_spin.setValue(100)
+        else:
+            self.width_spin.setRange(1, 8000)
+            self.height_spin.setRange(1, 8000)
+            self.width_spin.setSuffix("")
+            self.height_spin.setSuffix("")
+            self.width_spin.setValue(480)
+            self.height_spin.setValue(480)
+        for spin in (self.width_spin, self.height_spin):
+            spin.blockSignals(False)
+        self.settingsEdited.emit()
+
     def apply_to(self, model: GIFMakerModel) -> None:
+        resize_width = self.width_spin.value()
+        resize_height = self.height_spin.value()
+        if (
+            self.resize_box.isChecked()
+            and self.resize_unit_combo.currentText() == "Percentage"
+            and model.images
+        ):
+            try:
+                with Image.open(model.images[0].path) as ref:
+                    base_w, base_h = ref.size
+                resize_width = max(1, round(base_w * self.width_spin.value() / 100))
+                resize_height = max(1, round(base_h * self.height_spin.value() / 100))
+            except Exception:
+                pass  # fall back to the raw spin values if the reference image can't be read
+
         model.update_settings(
             frame_delay_ms=self.delay_spin.value(),
-            loop_count=0 if self.loop_check.isChecked() else 1,
+            loop_count=0 if self.loop_check.isChecked() else self.loop_count_spin.value(),
             resize_enabled=self.resize_box.isChecked(),
-            resize_width=self.width_spin.value(),
-            resize_height=self.height_spin.value(),
+            resize_width=resize_width,
+            resize_height=resize_height,
             keep_aspect_ratio=self.keep_aspect_check.isChecked(),
         )
+
+    def load_from(self, settings: GIFSettings) -> None:
+        """Push model settings back into the widgets, e.g. after a video
+        import computes a new frame delay. Resize is always shown in
+        Pixels here, since the model only ever stores absolute pixels."""
+        widgets = (
+            self.delay_spin, self.loop_check, self.loop_count_spin,
+            self.resize_box, self.resize_unit_combo, self.width_spin,
+            self.height_spin, self.keep_aspect_check,
+        )
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self.delay_spin.setValue(settings.frame_delay_ms)
+            self.loop_check.setChecked(settings.loop_count == 0)
+            self.loop_count_spin.setValue(max(1, settings.loop_count))
+            self.loop_count_spin.setEnabled(not self.loop_check.isChecked())
+            self.resize_box.setChecked(settings.resize_enabled)
+            self.resize_unit_combo.setCurrentText("Pixels")
+            self.width_spin.setRange(1, 8000)
+            self.height_spin.setRange(1, 8000)
+            self.width_spin.setSuffix("")
+            self.height_spin.setSuffix("")
+            self.width_spin.setValue(settings.resize_width)
+            self.height_spin.setValue(settings.resize_height)
+            self.keep_aspect_check.setChecked(settings.keep_aspect_ratio)
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
 
 
 class ExportThread(QThread):
@@ -263,19 +361,26 @@ class MainWindow(QMainWindow):
         # Left panel: image list
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(QLabel("Images (drag & drop, or use the Add button)"))
+        left_layout.addWidget(QLabel("Images or a video (drag & drop, or use the buttons below)"))
 
         self.list_widget = ImageListWidget()
         left_layout.addWidget(self.list_widget, 1)
 
-        buttons_row = QHBoxLayout()
-        self.add_button = QPushButton("Add…")
+        top_buttons_row = QHBoxLayout()
+        self.add_button = QPushButton("Add images…")
+        self.import_video_button = QPushButton("Import from video…")
+        top_buttons_row.addWidget(self.add_button)
+        top_buttons_row.addWidget(self.import_video_button)
+        left_layout.addLayout(top_buttons_row)
+
+        bottom_buttons_row = QHBoxLayout()
+        self.crop_button = QPushButton("Crop…")
         self.remove_button = QPushButton("Remove")
         self.clear_button = QPushButton("Clear all")
-        buttons_row.addWidget(self.add_button)
-        buttons_row.addWidget(self.remove_button)
-        buttons_row.addWidget(self.clear_button)
-        left_layout.addLayout(buttons_row)
+        bottom_buttons_row.addWidget(self.crop_button)
+        bottom_buttons_row.addWidget(self.remove_button)
+        bottom_buttons_row.addWidget(self.clear_button)
+        left_layout.addLayout(bottom_buttons_row)
 
         # Center: preview
         self.preview = PreviewWidget()
@@ -307,8 +412,11 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.list_widget.filesDropped.connect(self._add_images)
+        self.list_widget.videoDropped.connect(self._import_video)
         self.list_widget.orderChanged.connect(self._sync_order_from_widget)
         self.add_button.clicked.connect(self._choose_files)
+        self.import_video_button.clicked.connect(self._choose_video)
+        self.crop_button.clicked.connect(self._open_crop_tool)
         self.remove_button.clicked.connect(self._remove_selected)
         self.clear_button.clicked.connect(self._clear_all)
         self.settings_panel.settingsEdited.connect(self._on_settings_edited)
@@ -327,8 +435,12 @@ class MainWindow(QMainWindow):
     def dropEvent(self, event: QDropEvent) -> None:
         if event.mimeData().hasUrls():
             paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
-            paths = [p for p in paths if _is_image_file(p)]
-            self._add_images(paths)
+            images = [p for p in paths if _is_image_file(p)]
+            videos = [p for p in paths if _is_video_file(p)]
+            if images:
+                self._add_images(images)
+            if videos:
+                self._import_video(videos[0])
 
     # -- List actions ---------------------------------------------------------
 
@@ -341,6 +453,43 @@ class MainWindow(QMainWindow):
         )
         if paths:
             self._add_images(paths)
+
+    def _choose_video(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose a video",
+            "",
+            "Videos (*.mp4 *.mov *.m4v *.avi *.mkv *.webm)",
+        )
+        if path:
+            self._import_video(path)
+
+    def _import_video(self, path: str) -> None:
+        dialog = VideoImportDialog(path, parent=self)
+        if dialog.exec() and dialog.result_frame_paths:
+            self.model.add_images(dialog.result_frame_paths)
+            self.model.update_settings(frame_delay_ms=dialog.result_frame_delay_ms)
+            self.settings_panel.load_from(self.model.settings)
+
+    def _open_crop_tool(self) -> None:
+        if not self.model.images:
+            QMessageBox.information(self, "Nothing to crop", "Add images or import a video first.")
+            return
+        try:
+            reference = Image.open(self.model.images[0].path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Cannot open image", str(exc))
+            return
+        dialog = CropDialog(reference, parent=self)
+        if dialog.exec():
+            rect = dialog.normalized_rect()
+            if rect is None:
+                return
+            out_dir = tempfile.mkdtemp(prefix="gifmaker_crop_")
+            new_paths = apply_crop_to_images(self.model.image_paths(), rect, out_dir)
+            for item, new_path in zip(self.model.images, new_paths):
+                item.path = new_path
+            self.model.images_changed.emit()
 
     def _add_images(self, paths: list[str]) -> None:
         if paths:

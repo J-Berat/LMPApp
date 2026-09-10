@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
@@ -26,10 +28,25 @@ class _BookOfAbstracts(FPDF):
         self.set_text_color(0, 0, 0)
 
 
+def _group_by_day(sessions: list[Session]) -> list[tuple[str, list[Session]]]:
+    """Group sessions by date, preserving chronological order. Sessions
+    with no date are kept together at the end under an empty key."""
+    by_date: dict[str, list[Session]] = defaultdict(list)
+    for s in sessions:
+        by_date[s.date.strip()].append(s)
+    dated = sorted((d for d in by_date if d), key=lambda d: d)
+    groups = [(d, by_date[d]) for d in dated]
+    if by_date.get(""):
+        groups.append(("", by_date[""]))
+    return groups
+
+
 def export_book_of_abstracts(sessions: list[Session], output_path: str, event_title: str = "Book of Abstracts") -> None:
     """Write a PDF with a title page and one entry per session with an abstract.
 
-    Sessions are expected pre-sorted (e.g. by date, as returned by
+    Sessions are grouped into "Day N" sections by date (in a multi-day
+    event this makes the program's structure clear at a glance) and are
+    expected pre-sorted within each day (e.g. by time, as returned by
     ConferenceDB.list_sessions()). Sessions with an empty abstract are
     skipped. Raises ExportError if there is nothing to export.
     """
@@ -47,27 +64,46 @@ def export_book_of_abstracts(sessions: list[Session], output_path: str, event_ti
     pdf.ln(4)
     pdf.multi_cell(0, 8, f"{len(entries)} talk(s)", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-    for entry in entries:
-        pdf.add_page()
+    day_groups = _group_by_day(entries)
+    multi_day = len([d for d, _ in day_groups if d]) > 1
 
-        pdf.set_font("Helvetica", "B", 15)
-        pdf.multi_cell(0, 9, entry.title or "(untitled talk)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.ln(1)
+    for day_index, (day, day_entries) in enumerate(day_groups, start=1):
+        if multi_day:
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 18)
+            label = f"Day {day_index} - {day}" if day else "Date to be announced"
+            pdf.multi_cell(0, 12, label, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-        pdf.set_font("Helvetica", "I", 11)
-        speaker_line = entry.authors or entry.speaker_name
-        if speaker_line:
-            pdf.multi_cell(0, 7, speaker_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        for entry in day_entries:
+            pdf.add_page()
 
-        date_line = " ".join(part for part in (entry.date, entry.time) if part)
-        if date_line:
-            pdf.set_font("Helvetica", "", 10)
-            pdf.set_text_color(100, 100, 100)
-            pdf.multi_cell(0, 6, date_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.set_text_color(0, 0, 0)
+            pdf.set_font("Helvetica", "B", 15)
+            pdf.multi_cell(0, 9, entry.title or "(untitled talk)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-        pdf.ln(4)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.multi_cell(0, 6, entry.abstract or "(no abstract submitted)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            if entry.category.strip():
+                pdf.set_font("Helvetica", "I", 10)
+                pdf.set_text_color(20, 90, 100)
+                pdf.multi_cell(0, 6, entry.category.strip(), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_text_color(0, 0, 0)
+
+            pdf.ln(1)
+
+            pdf.set_font("Helvetica", "I", 11)
+            speaker_line = entry.authors or entry.speaker_name
+            if speaker_line:
+                pdf.multi_cell(0, 7, speaker_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+            date_line = " ".join(part for part in (entry.date, entry.time) if part)
+            if entry.room.strip():
+                date_line = f"{date_line} - {entry.room.strip()}" if date_line else entry.room.strip()
+            if date_line:
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(100, 100, 100)
+                pdf.multi_cell(0, 6, date_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_text_color(0, 0, 0)
+
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.multi_cell(0, 6, entry.abstract or "(no abstract submitted)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.output(output_path)

@@ -78,6 +78,7 @@ class SessionDialog(QDialog):
         self,
         speakers: list[Speaker],
         rooms: list[str] | None = None,
+        categories: list[str] | None = None,
         session: Session | None = None,
         parent=None,
     ) -> None:
@@ -108,6 +109,14 @@ class SessionDialog(QDialog):
         if session:
             self.room_combo.setCurrentText(session.room)
 
+        self.category_combo = QComboBox()
+        self.category_combo.setEditable(True)
+        self.category_combo.addItem("")
+        for category in categories or []:
+            self.category_combo.addItem(category)
+        if session:
+            self.category_combo.setCurrentText(session.category)
+
         self.title_edit = QLineEdit(session.title if session else "")
         self.authors_edit = QLineEdit(session.authors if session else "")
         self.abstract_edit = QTextEdit(session.abstract if session else "")
@@ -128,6 +137,7 @@ class SessionDialog(QDialog):
         form.addRow("Date:", self.date_edit)
         form.addRow("Time:", self.time_edit)
         form.addRow("Room:", self.room_combo)
+        form.addRow("Category/tag:", self.category_combo)
         form.addRow("Talk title:", self.title_edit)
         form.addRow("Author(s):", self.authors_edit)
         form.addRow("Abstract:", self.abstract_edit)
@@ -157,6 +167,7 @@ class SessionDialog(QDialog):
             authors=self.authors_edit.text().strip(),
             abstract=self.abstract_edit.toPlainText().strip(),
             room=self.room_combo.currentText().strip(),
+            category=self.category_combo.currentText().strip(),
             status=self.status_combo.currentText(),
             recording_url=self.recording_edit.text().strip(),
             slides_url=self.slides_edit.text().strip(),

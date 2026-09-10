@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from PySide6.QtCore import QDate
-from PySide6.QtGui import QTextCharFormat, QColor, QBrush
+from PySide6.QtCore import Qt, QDate
+from PySide6.QtGui import QTextCharFormat, QColor, QBrush, QFont
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QLabel,
+    QCheckBox,
 )
 
 from .db import ConferenceDB, Session
@@ -23,9 +24,16 @@ CONFLICT_BG = QColor("#f8c9c9")
 CONFLICT_FG = QColor("#7a1f1f")
 
 
+def _session_line(s: Session) -> str:
+    room_part = f" — {s.room}" if s.room else ""
+    speaker_part = f" ({s.speaker_name})" if s.speaker_name else ""
+    category_part = f" [{s.category}]" if s.category else ""
+    return f"{s.time or '?'}  {s.title or '(untitled)'}{room_part}{speaker_part}{category_part}"
+
+
 class CalendarTab(QWidget):
-    """A month calendar with all sessions, plus a same-day list and a
-    conflict banner listing every room double-booking."""
+    """A month calendar with all sessions, plus a same-day (or full
+    multi-day) list and a conflict banner listing every room double-booking."""
 
     def __init__(self, db: ConferenceDB, parent=None) -> None:
         super().__init__(parent)
@@ -40,10 +48,15 @@ class CalendarTab(QWidget):
         self.calendar.setGridVisible(True)
         self.calendar.selectionChanged.connect(self._update_day_list)
 
+        self.show_all_checkbox = QCheckBox("Show full program (all days)")
+        self.show_all_checkbox.stateChanged.connect(self._update_day_list)
+
         self.day_list = QListWidget()
 
         side = QVBoxLayout()
-        side.addWidget(QLabel("Sessions on selected day:"))
+        self.side_label = QLabel("Sessions on selected day:")
+        side.addWidget(self.side_label)
+        side.addWidget(self.show_all_checkbox)
         side.addWidget(self.day_list)
 
         content = QHBoxLayout()
@@ -107,6 +120,14 @@ class CalendarTab(QWidget):
 
     def _update_day_list(self) -> None:
         self.day_list.clear()
+        if self.show_all_checkbox.isChecked():
+            self.side_label.setText("Full program (all days):")
+            self._populate_full_program()
+        else:
+            self.side_label.setText("Sessions on selected day:")
+            self._populate_selected_day()
+
+    def _populate_selected_day(self) -> None:
         selected = self.calendar.selectedDate()
         date_str = selected.toString("yyyy-MM-dd")
         sessions = [s for s in self.db.list_sessions() if s.date.strip() == date_str]
@@ -114,15 +135,52 @@ class CalendarTab(QWidget):
             self.day_list.addItem("(no session on this day)")
             return
         conflicts = self.db.find_room_conflicts(sessions)
-        conflict_session_ids = {s.id for c in conflicts for s in c.sessions}
+        conflict_ids = {s.id for c in conflicts for s in c.sessions}
         for s in sessions:
-            room_part = f" — {s.room}" if s.room else ""
-            speaker_part = f" ({s.speaker_name})" if s.speaker_name else ""
-            text = f"{s.time or '?'}  {s.title or '(untitled)'}{room_part}{speaker_part}"
-            item = QListWidgetItem(text)
-            if s.id in conflict_session_ids:
-                item.setForeground(QBrush(CONFLICT_FG))
-                text_font = item.font()
-                text_font.setBold(True)
-                item.setFont(text_font)
-            self.day_list.addItem(item)
+            self.day_list.addItem(self._session_item(s, conflict_ids))
+
+    def _populate_full_program(self) -> None:
+        sessions = self.db.list_sessions()
+        if not sessions:
+            self.day_list.addItem("(no sessions yet)")
+            return
+        conflicts = self.db.find_room_conflicts(sessions)
+        conflict_ids = {s.id for c in conflicts for s in c.sessions}
+
+        by_date: dict[str, list[Session]] = defaultdict(list)
+        undated: list[Session] = []
+        for s in sessions:
+            if s.date.strip():
+                by_date[s.date.strip()].append(s)
+            else:
+                undated.append(s)
+
+        for date_str in sorted(by_date.keys()):
+            header = QListWidgetItem(date_str)
+            header_font = header.font()
+            header_font.setBold(True)
+            header.setFont(header_font)
+            header.setFlags(Qt.NoItemFlags)  # a plain section label, not a selectable row
+            self.day_list.addItem(header)
+            for s in by_date[date_str]:
+                self.day_list.addItem(self._session_item(s, conflict_ids))
+
+        if undated:
+            header = QListWidgetItem("Date to be announced")
+            header_font = header.font()
+            header_font.setBold(True)
+            header.setFont(header_font)
+            header.setFlags(Qt.NoItemFlags)
+            self.day_list.addItem(header)
+            for s in undated:
+                self.day_list.addItem(self._session_item(s, conflict_ids))
+
+    @staticmethod
+    def _session_item(s: Session, conflict_ids: set) -> QListWidgetItem:
+        item = QListWidgetItem("    " + _session_line(s))
+        if s.id in conflict_ids:
+            item.setForeground(QBrush(CONFLICT_FG))
+            font: QFont = item.font()
+            font.setBold(True)
+            item.setFont(font)
+        return item

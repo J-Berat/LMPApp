@@ -110,6 +110,8 @@ def _event_lines(session: Session) -> list[str]:
     description_parts = []
     if session.speaker_name.strip():
         description_parts.append(f"Speaker: {session.speaker_name.strip()}")
+    if session.category.strip():
+        description_parts.append(f"Category: {session.category.strip()}")
     if session.abstract.strip():
         description_parts.append(session.abstract.strip())
     if session.recording_url.strip():

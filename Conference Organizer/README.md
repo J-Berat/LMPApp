@@ -16,9 +16,19 @@ No technical knowledge or Python installation required:
    - **Linux**: `ConferenceOrganizer-Linux.zip` → unzip, make the file executable (`chmod +x "Conference Organizer"`), then run it.
 3. On first launch, your OS may show a warning because the app isn't
    signed by a paid developer account (expected for a personal project):
-   - **macOS**: right-click the app → "Open", then confirm. If you see a
-     "damaged app" message, open Terminal and run:
-     `xattr -cr "/Applications/Conference Organizer.app"`
+   - **macOS**: the first time you open it, macOS will likely refuse,
+     saying it "cannot be opened because it is from an unidentified
+     developer" or that it "could not be verified... may be dangerous".
+     This is expected for an app that isn't signed by a paid Apple
+     developer account — it doesn't mean anything is actually wrong with
+     the app. To get past it:
+     - **Most reliable**: open Terminal and run
+       `xattr -cr "/Applications/Conference Organizer.app"`, then open the app
+       normally.
+     - **Without Terminal**: try to open the app once (it will be
+       blocked), then go to **System Settings → Privacy & Security**,
+       scroll down to the notice about this app being blocked, and click
+       **"Open Anyway"**.
    - **Windows**: click "More info" → "Run anyway" in the SmartScreen
      window.
 

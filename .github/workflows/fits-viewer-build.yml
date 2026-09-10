@@ -1,0 +1,88 @@
+name: FITS Viewer - Build
+
+# This file must live at the repo ROOT (.github/workflows/) once this
+# project is mirrored into the LMPApp monorepo, even though the
+# application code lives in the "FITS Viewer/" subfolder there - GitHub
+# Actions only runs workflows placed at the repository root. All commands
+# below run inside that subfolder thanks to `defaults.run.working-directory`.
+
+on:
+  push:
+    tags:
+      - "fits-viewer-v*"
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    working-directory: "FITS Viewer"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-latest
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          chmod +x scripts/build_mac.sh
+          ./scripts/build_mac.sh
+          cd dist && zip -r "FITS-Viewer-macOS.zip" "FITS Viewer.app"
+
+      - name: Build (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          chmod +x scripts/build_linux.sh
+          ./scripts/build_linux.sh
+          cd dist && zip -j "FITS-Viewer-Linux.zip" "FITS Viewer"
+
+      - name: Build (Windows)
+        if: matrix.platform == 'windows'
+        shell: cmd
+        run: |
+          call scripts\build_windows.bat
+          powershell -Command "Compress-Archive -Path 'dist\FITS Viewer.exe' -DestinationPath 'dist\FITS-Viewer-Windows.zip'"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fits-viewer-${{ matrix.platform }}
+          path: "FITS Viewer/dist/FITS-Viewer-${{ matrix.platform == 'macos' && 'macOS' || matrix.platform == 'linux' && 'Linux' || 'Windows' }}.zip"
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*/*.zip
+          generate_release_notes: true

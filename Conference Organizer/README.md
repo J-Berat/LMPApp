@@ -9,7 +9,7 @@ everything is stored in a single local file. Works the same way on
 
 No technical knowledge or Python installation required:
 
-1. Go to the **[Releases](../../releases)** tab of this repository.
+1. Go to the **[Releases](https://github.com/J-Berat/LMPApp/releases)** tab of this repository.
 2. Download the file for your system:
    - **macOS**: `ConferenceOrganizer-macOS.zip` → unzip, then drag `Conference Organizer.app` into your Applications folder.
    - **Windows**: `ConferenceOrganizer-Windows.zip` → unzip, then double-click `Conference Organizer.exe`.

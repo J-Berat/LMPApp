@@ -13,6 +13,7 @@ from PIL import Image, ImageOps
 
 from .model import GIFSettings
 from .gif_exporter import ExportError
+from .text_overlay import apply_text_overlay
 
 
 def _load_frame_array(path: str, settings: GIFSettings, target_size: tuple[int, int] | None) -> np.ndarray:
@@ -29,6 +30,9 @@ def _load_frame_array(path: str, settings: GIFSettings, target_size: tuple[int, 
             img = img.resize((target_w, target_h), Image.LANCZOS)
     elif target_size is not None:
         img = img.resize(target_size, Image.LANCZOS)
+
+    if settings.overlay_text.strip():
+        img = apply_text_overlay(img, settings)
 
     return np.asarray(img)
 

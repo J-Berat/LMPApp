@@ -5,6 +5,7 @@ from __future__ import annotations
 from PIL import Image, ImageOps
 
 from .model import GIFSettings
+from .text_overlay import apply_text_overlay
 
 
 class ExportError(Exception):
@@ -24,6 +25,9 @@ def _load_and_prepare(path: str, settings: GIFSettings) -> Image.Image:
         else:
             img = img.resize((target_w, target_h), Image.LANCZOS)
 
+    if settings.overlay_text.strip():
+        img = apply_text_overlay(img, settings)
+
     return img
 
 
@@ -37,8 +41,10 @@ def export_gif(image_paths: list[str], output_path: str, settings: GIFSettings) 
 
     frames = [_load_and_prepare(p, settings) for p in image_paths]
 
+    colors = max(2, min(256, settings.color_count))
+    dither = Image.FLOYDSTEINBERG if settings.dither else Image.NONE
     # A shared palette avoids color flicker between frames.
-    converted = [f.convert("P", palette=Image.ADAPTIVE, colors=256) for f in frames]
+    converted = [f.convert("P", palette=Image.ADAPTIVE, colors=colors, dither=dither) for f in frames]
 
     converted[0].save(
         output_path,

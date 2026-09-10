@@ -23,23 +23,45 @@ class ImageItem:
 
 @dataclass
 class GIFSettings:
-    """Export settings, shared by the GIF and MP4 exporters."""
+    """Export settings, shared by the GIF, MP4 and WebP exporters."""
 
     # Delay between two frames, in milliseconds (replaces the old "fps stepper").
     frame_delay_ms: int = 200
-    # Number of loops for the GIF. 0 means infinite loop.
+    # Number of loops for the GIF/WebP. 0 means infinite loop.
     loop_count: int = 0
+    # Play the sequence forward then backward before looping, for a
+    # seamless loop instead of a hard cut back to the first frame.
+    ping_pong: bool = False
     # Optional resizing.
     resize_enabled: bool = False
     resize_width: int = 480
     resize_height: int = 480
     keep_aspect_ratio: bool = True
+    # GIF color palette. Lower colors / no dithering make smaller files at
+    # the cost of quality; WebP/MP4 are not palette-based and ignore this.
+    color_count: int = 256
+    dither: bool = True
+    # Optional text burned into every frame (caption or watermark).
+    overlay_text: str = ""
+    overlay_position: str = "bottom-right"  # top-left/top-right/bottom-left/bottom-right/center
+    overlay_font_size: int = 28
+    overlay_color: str = "#FFFFFF"
+    overlay_opacity: float = 0.85  # 0.0-1.0
 
     @property
     def fps(self) -> float:
         if self.frame_delay_ms <= 0:
             return 30.0
         return 1000.0 / self.frame_delay_ms
+
+
+def build_ping_pong_sequence(paths: list[str]) -> list[str]:
+    """Forward then backward, without repeating the two end frames (which
+    would create a visible stutter): [a,b,c,d] -> [a,b,c,d,c,b]. A no-op
+    for sequences of fewer than 2 frames."""
+    if len(paths) < 2:
+        return list(paths)
+    return list(paths) + list(reversed(paths))[1:-1]
 
 
 class GIFMakerModel(QObject):
@@ -91,6 +113,14 @@ class GIFMakerModel(QObject):
 
     def image_paths(self) -> list[str]:
         return [item.path for item in self.images]
+
+    def effective_image_paths(self) -> list[str]:
+        """The paths actually rendered/exported, i.e. the sequence with
+        ping-pong applied when enabled."""
+        paths = self.image_paths()
+        if self.settings.ping_pong:
+            paths = build_ping_pong_sequence(paths)
+        return paths
 
     # -- Settings -----------------------------------------------------------------------
 

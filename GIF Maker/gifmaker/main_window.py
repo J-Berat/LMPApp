@@ -8,7 +8,7 @@ import tempfile
 from PIL import Image
 
 from PySide6.QtCore import Qt, QTimer, QSize, QThread, Signal
-from PySide6.QtGui import QPixmap, QIcon, QAction, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QPixmap, QIcon, QAction, QColor, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSplitter,
     QGroupBox,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QComboBox,
     QCheckBox,
+    QColorDialog,
     QFileDialog,
     QMessageBox,
     QMenu,
@@ -36,12 +38,22 @@ from PySide6.QtWidgets import (
 from .model import GIFMakerModel, GIFSettings
 from .gif_exporter import export_gif, ExportError
 from .video_exporter import export_mp4
+from .webp_exporter import export_webp
 from .video_import_dialog import VideoImportDialog
+from .batch_export_dialog import BatchExportDialog
 from .crop_widget import CropDialog, apply_crop_to_images
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp")
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")
 THUMBNAIL_SIZE = QSize(72, 72)
+
+OVERLAY_POSITIONS = [
+    ("Bottom right", "bottom-right"),
+    ("Bottom left", "bottom-left"),
+    ("Top right", "top-right"),
+    ("Top left", "top-left"),
+    ("Center", "center"),
+]
 
 
 def _is_image_file(path: str) -> bool:
@@ -166,12 +178,13 @@ class PreviewWidget(QWidget):
 
 
 class SettingsPanel(QWidget):
-    """Resizing, timing and looping settings."""
+    """Timing, resizing, palette and watermark settings."""
 
     settingsEdited = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._overlay_color = "#FFFFFF"
 
         timing_box = QGroupBox("Timing")
         self.delay_spin = QSpinBox()
@@ -192,10 +205,15 @@ class SettingsPanel(QWidget):
         self.loop_count_spin.setEnabled(False)
         self.loop_count_spin.valueChanged.connect(self.settingsEdited)
 
+        self.ping_pong_check = QCheckBox("Ping-pong (play forward then backward before looping)")
+        self.ping_pong_check.setChecked(False)
+        self.ping_pong_check.stateChanged.connect(self.settingsEdited)
+
         timing_form = QFormLayout(timing_box)
         timing_form.addRow("Delay between frames:", self.delay_spin)
         timing_form.addRow(self.loop_check)
         timing_form.addRow("Loop count:", self.loop_count_spin)
+        timing_form.addRow(self.ping_pong_check)
 
         resize_box = QGroupBox("Resize")
         resize_box.setCheckable(True)
@@ -227,9 +245,65 @@ class SettingsPanel(QWidget):
         resize_form.addRow("Height:", self.height_spin)
         resize_form.addRow(self.keep_aspect_check)
 
+        quality_box = QGroupBox("GIF quality")
+        self.colors_spin = QSpinBox()
+        self.colors_spin.setRange(2, 256)
+        self.colors_spin.setValue(256)
+        self.colors_spin.valueChanged.connect(self.settingsEdited)
+        self.dither_check = QCheckBox("Dithering")
+        self.dither_check.setChecked(True)
+        self.dither_check.stateChanged.connect(self.settingsEdited)
+        quality_form = QFormLayout(quality_box)
+        quality_form.addRow("Colors:", self.colors_spin)
+        quality_form.addRow(self.dither_check)
+        quality_note = QLabel("Fewer colors / no dithering make a smaller GIF file. MP4 and WebP are unaffected.")
+        quality_note.setWordWrap(True)
+        quality_note.setStyleSheet("color: #777777;")
+        quality_form.addRow(quality_note)
+
+        overlay_box = QGroupBox("Text overlay / watermark")
+        overlay_box.setCheckable(True)
+        overlay_box.setChecked(False)
+        overlay_box.toggled.connect(self.settingsEdited)
+        self.overlay_box = overlay_box
+
+        self.overlay_text_edit = QLineEdit()
+        self.overlay_text_edit.setPlaceholderText("Text to burn into every frame")
+        self.overlay_text_edit.textChanged.connect(self.settingsEdited)
+
+        self.overlay_position_combo = QComboBox()
+        for label, value in OVERLAY_POSITIONS:
+            self.overlay_position_combo.addItem(label, value)
+        self.overlay_position_combo.currentIndexChanged.connect(self.settingsEdited)
+
+        self.overlay_font_size_spin = QSpinBox()
+        self.overlay_font_size_spin.setRange(8, 200)
+        self.overlay_font_size_spin.setValue(28)
+        self.overlay_font_size_spin.setSuffix(" px")
+        self.overlay_font_size_spin.valueChanged.connect(self.settingsEdited)
+
+        self.overlay_color_button = QPushButton()
+        self.overlay_color_button.clicked.connect(self._choose_overlay_color)
+        self._update_overlay_color_button()
+
+        self.overlay_opacity_spin = QSpinBox()
+        self.overlay_opacity_spin.setRange(10, 100)
+        self.overlay_opacity_spin.setValue(85)
+        self.overlay_opacity_spin.setSuffix(" %")
+        self.overlay_opacity_spin.valueChanged.connect(self.settingsEdited)
+
+        overlay_form = QFormLayout(overlay_box)
+        overlay_form.addRow("Text:", self.overlay_text_edit)
+        overlay_form.addRow("Position:", self.overlay_position_combo)
+        overlay_form.addRow("Size:", self.overlay_font_size_spin)
+        overlay_form.addRow("Color:", self.overlay_color_button)
+        overlay_form.addRow("Opacity:", self.overlay_opacity_spin)
+
         layout = QVBoxLayout(self)
         layout.addWidget(timing_box)
         layout.addWidget(resize_box)
+        layout.addWidget(quality_box)
+        layout.addWidget(overlay_box)
         layout.addStretch(1)
 
     def _on_loop_forever_toggled(self) -> None:
@@ -258,6 +332,19 @@ class SettingsPanel(QWidget):
             spin.blockSignals(False)
         self.settingsEdited.emit()
 
+    def _update_overlay_color_button(self) -> None:
+        self.overlay_color_button.setStyleSheet(
+            f"background-color: {self._overlay_color}; color: #000000;"
+        )
+        self.overlay_color_button.setText(self._overlay_color)
+
+    def _choose_overlay_color(self) -> None:
+        color = QColorDialog.getColor(QColor(self._overlay_color), self, "Text color")
+        if color.isValid():
+            self._overlay_color = color.name()
+            self._update_overlay_color_button()
+            self.settingsEdited.emit()
+
     def apply_to(self, model: GIFMakerModel) -> None:
         resize_width = self.width_spin.value()
         resize_height = self.height_spin.value()
@@ -277,10 +364,18 @@ class SettingsPanel(QWidget):
         model.update_settings(
             frame_delay_ms=self.delay_spin.value(),
             loop_count=0 if self.loop_check.isChecked() else self.loop_count_spin.value(),
+            ping_pong=self.ping_pong_check.isChecked(),
             resize_enabled=self.resize_box.isChecked(),
             resize_width=resize_width,
             resize_height=resize_height,
             keep_aspect_ratio=self.keep_aspect_check.isChecked(),
+            color_count=self.colors_spin.value(),
+            dither=self.dither_check.isChecked(),
+            overlay_text=self.overlay_text_edit.text().strip() if self.overlay_box.isChecked() else "",
+            overlay_position=self.overlay_position_combo.currentData(),
+            overlay_font_size=self.overlay_font_size_spin.value(),
+            overlay_color=self._overlay_color,
+            overlay_opacity=self.overlay_opacity_spin.value() / 100.0,
         )
 
     def load_from(self, settings: GIFSettings) -> None:
@@ -288,9 +383,12 @@ class SettingsPanel(QWidget):
         import computes a new frame delay. Resize is always shown in
         Pixels here, since the model only ever stores absolute pixels."""
         widgets = (
-            self.delay_spin, self.loop_check, self.loop_count_spin,
+            self.delay_spin, self.loop_check, self.loop_count_spin, self.ping_pong_check,
             self.resize_box, self.resize_unit_combo, self.width_spin,
             self.height_spin, self.keep_aspect_check,
+            self.colors_spin, self.dither_check,
+            self.overlay_box, self.overlay_text_edit, self.overlay_position_combo,
+            self.overlay_font_size_spin, self.overlay_opacity_spin,
         )
         for widget in widgets:
             widget.blockSignals(True)
@@ -299,6 +397,7 @@ class SettingsPanel(QWidget):
             self.loop_check.setChecked(settings.loop_count == 0)
             self.loop_count_spin.setValue(max(1, settings.loop_count))
             self.loop_count_spin.setEnabled(not self.loop_check.isChecked())
+            self.ping_pong_check.setChecked(settings.ping_pong)
             self.resize_box.setChecked(settings.resize_enabled)
             self.resize_unit_combo.setCurrentText("Pixels")
             self.width_spin.setRange(1, 8000)
@@ -308,9 +407,19 @@ class SettingsPanel(QWidget):
             self.width_spin.setValue(settings.resize_width)
             self.height_spin.setValue(settings.resize_height)
             self.keep_aspect_check.setChecked(settings.keep_aspect_ratio)
+            self.colors_spin.setValue(settings.color_count)
+            self.dither_check.setChecked(settings.dither)
+            self.overlay_box.setChecked(bool(settings.overlay_text.strip()))
+            self.overlay_text_edit.setText(settings.overlay_text)
+            position_index = self.overlay_position_combo.findData(settings.overlay_position)
+            self.overlay_position_combo.setCurrentIndex(max(0, position_index))
+            self.overlay_font_size_spin.setValue(settings.overlay_font_size)
+            self._overlay_color = settings.overlay_color
+            self.overlay_opacity_spin.setValue(round(settings.overlay_opacity * 100))
         finally:
             for widget in widgets:
                 widget.blockSignals(False)
+        self._update_overlay_color_button()
 
 
 class ExportThread(QThread):
@@ -330,6 +439,8 @@ class ExportThread(QThread):
         try:
             if self.kind == "gif":
                 export_gif(self.paths, self.output_path, self.settings)
+            elif self.kind == "webp":
+                export_webp(self.paths, self.output_path, self.settings)
             else:
                 export_mp4(self.paths, self.output_path, self.settings)
         except ExportError as exc:
@@ -382,6 +493,9 @@ class MainWindow(QMainWindow):
         bottom_buttons_row.addWidget(self.clear_button)
         left_layout.addLayout(bottom_buttons_row)
 
+        self.batch_export_button = QPushButton("Batch export videos…")
+        left_layout.addWidget(self.batch_export_button)
+
         # Center: preview
         self.preview = PreviewWidget()
 
@@ -393,8 +507,10 @@ class MainWindow(QMainWindow):
 
         self.export_gif_button = QPushButton("Export as GIF…")
         self.export_mp4_button = QPushButton("Export as MP4…")
+        self.export_webp_button = QPushButton("Export as WebP…")
         right_layout.addWidget(self.export_gif_button)
         right_layout.addWidget(self.export_mp4_button)
+        right_layout.addWidget(self.export_webp_button)
         right_layout.addStretch(1)
 
         splitter = QSplitter()
@@ -419,9 +535,11 @@ class MainWindow(QMainWindow):
         self.crop_button.clicked.connect(self._open_crop_tool)
         self.remove_button.clicked.connect(self._remove_selected)
         self.clear_button.clicked.connect(self._clear_all)
+        self.batch_export_button.clicked.connect(self._open_batch_export)
         self.settings_panel.settingsEdited.connect(self._on_settings_edited)
         self.export_gif_button.clicked.connect(lambda: self._export("gif"))
         self.export_mp4_button.clicked.connect(lambda: self._export("mp4"))
+        self.export_webp_button.clicked.connect(lambda: self._export("webp"))
         self.model.images_changed.connect(self._refresh_list)
         self.model.images_changed.connect(self._refresh_preview)
         self.model.settings_changed.connect(self._refresh_preview)
@@ -470,6 +588,14 @@ class MainWindow(QMainWindow):
             self.model.add_images(dialog.result_frame_paths)
             self.model.update_settings(frame_delay_ms=dialog.result_frame_delay_ms)
             self.settings_panel.load_from(self.model.settings)
+
+    def _open_batch_export(self) -> None:
+        # Make sure the model reflects whatever is currently set in the
+        # panel (resize/loop/ping-pong/palette/watermark), so the batch
+        # reuses exactly what's configured on screen.
+        self.settings_panel.apply_to(self.model)
+        dialog = BatchExportDialog(self.model.settings, parent=self)
+        dialog.exec()
 
     def _open_crop_tool(self) -> None:
         if not self.model.images:
@@ -540,7 +666,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.apply_to(self.model)
 
     def _refresh_preview(self) -> None:
-        self.preview.set_sequence(self.model.image_paths(), self.model.settings.frame_delay_ms)
+        self.preview.set_sequence(self.model.effective_image_paths(), self.model.settings.frame_delay_ms)
 
     # -- Export -----------------------------------------------------------------------
 
@@ -555,6 +681,10 @@ class MainWindow(QMainWindow):
             path, _ = QFileDialog.getSaveFileName(
                 self, "Choose a name and location for the GIF file", "animation.gif", "GIF (*.gif)"
             )
+        elif kind == "webp":
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Choose a name and location for the WebP file", "animation.webp", "WebP (*.webp)"
+            )
         else:
             path, _ = QFileDialog.getSaveFileName(
                 self, "Choose a name and location for the MP4 file", "animation.mp4", "MP4 video (*.mp4)"
@@ -567,7 +697,9 @@ class MainWindow(QMainWindow):
         self._progress.setCancelButton(None)
         self._progress.show()
 
-        self._export_thread = ExportThread(kind, self.model.image_paths(), path, self.model.settings, self)
+        self._export_thread = ExportThread(
+            kind, self.model.effective_image_paths(), path, self.model.settings, self
+        )
         self._export_thread.finished_ok.connect(self._on_export_success)
         self._export_thread.failed.connect(self._on_export_failed)
         self._export_thread.start()

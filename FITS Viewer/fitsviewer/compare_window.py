@@ -107,17 +107,18 @@ class CompareWindow(QWidget):
             if result is None:
                 self.spectrum_view.remove_curve(panel.label)
                 continue
-            flux, axis_values, axis_unit, value_unit = result
             name = panel.label
             if panel.current_path:
                 name = f"{panel.label}: {os.path.basename(panel.current_path)}"
             self.spectrum_view.set_curve(
                 panel.label,
-                flux,
-                axis_values,
+                result.flux,
+                result.axis_values,
                 label=name,
                 color=DEFAULT_CURVE_COLORS[i % len(DEFAULT_CURVE_COLORS)],
-                x_unit=axis_unit,
-                y_unit=value_unit,
+                x_label=result.axis_label or "Axis value",
+                x_unit=result.axis_unit,
+                y_label=result.value_label or "Value",
+                y_unit=result.value_unit,
                 index_label="Plane index",
             )

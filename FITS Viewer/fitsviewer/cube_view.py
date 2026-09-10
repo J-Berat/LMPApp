@@ -22,6 +22,8 @@ class CubeView(QWidget):
         self._axis_values: np.ndarray | None = None
         self._axis_unit: str | None = None
         self._value_unit: str | None = None
+        self._axis_label: str | None = None
+        self._value_label: str | None = None
         self._selected_pixel: tuple[int, int] | None = None
 
         self.image_view = ImageView()
@@ -74,6 +76,8 @@ class CubeView(QWidget):
         axis_values: np.ndarray | None,
         axis_unit: str | None = None,
         value_unit: str | None = None,
+        axis_label: str | None = None,
+        value_label: str | None = None,
     ) -> None:
         """Load a new cube. The full 3D array is kept in memory: browsing
         planes and changing stretch/interval/colormap afterwards never
@@ -82,6 +86,8 @@ class CubeView(QWidget):
         self._axis_values = axis_values
         self._axis_unit = axis_unit
         self._value_unit = value_unit
+        self._axis_label = axis_label
+        self._value_label = value_label
         self._selected_pixel = None
         self._vline.setVisible(False)
         self._hline.setVisible(False)
@@ -141,7 +147,9 @@ class CubeView(QWidget):
         self.spectrum_view.set_spectrum(
             spectrum,
             self._axis_values,
+            x_label=self._axis_label or "Axis value",
             x_unit=self._axis_unit,
+            y_label=self._value_label or "Value",
             y_unit=self._value_unit,
             index_label="Plane index",
         )

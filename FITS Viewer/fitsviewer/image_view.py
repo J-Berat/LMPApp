@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton
 
 # A light theme matches the rest of the app's plain Qt widgets instead of
 # pyqtgraph's default black plot background; row-major matches plain
@@ -59,12 +59,31 @@ class ImageView(QWidget):
         toolbar.addWidget(self.colormap_combo)
         toolbar.addStretch(1)
 
+        # Scrolling and dragging on the image already zoom/pan (built into
+        # pyqtgraph), but that's easy to miss - these buttons make it
+        # explicit and give a one-click way back to the full view.
+        self.zoom_in_button = QPushButton("Zoom in")
+        self.zoom_out_button = QPushButton("Zoom out")
+        self.reset_zoom_button = QPushButton("Reset view")
+        self.zoom_in_button.setToolTip("You can also scroll to zoom, or drag to pan")
+        self.zoom_out_button.setToolTip("You can also scroll to zoom, or drag to pan")
+        self.zoom_in_button.clicked.connect(self._zoom_in)
+        self.zoom_out_button.clicked.connect(self._zoom_out)
+        self.reset_zoom_button.clicked.connect(self._reset_zoom)
+
+        zoom_row = QHBoxLayout()
+        zoom_row.addWidget(self.zoom_in_button)
+        zoom_row.addWidget(self.zoom_out_button)
+        zoom_row.addWidget(self.reset_zoom_button)
+        zoom_row.addStretch(1)
+
         self.image_view = pg.ImageView()
         self.image_view.ui.roiBtn.hide()
         self.image_view.ui.menuBtn.hide()
 
         layout = QVBoxLayout(self)
         layout.addLayout(toolbar)
+        layout.addLayout(zoom_row)
         layout.addWidget(self.image_view)
 
         self._apply_colormap(self.colormap_combo.currentText())
@@ -84,3 +103,12 @@ class ImageView(QWidget):
         positions = [pos for pos, _rgb in stops]
         colors = [(r, g, b, 255) for _pos, (r, g, b) in stops]
         self.image_view.setColorMap(pg.ColorMap(positions, colors))
+
+    def _zoom_in(self) -> None:
+        self.image_view.getView().scaleBy((0.8, 0.8))
+
+    def _zoom_out(self) -> None:
+        self.image_view.getView().scaleBy((1.25, 1.25))
+
+    def _reset_zoom(self) -> None:
+        self.image_view.getView().autoRange()

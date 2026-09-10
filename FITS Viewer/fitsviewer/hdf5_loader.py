@@ -42,10 +42,12 @@ class Hdf5Data:
     kind: str  # "image", "spectrum" or "cube"
     array: np.ndarray  # 1D for a spectrum, 2D for an image, 3D for a cube
     attributes: dict[str, str]
-    axis_values: np.ndarray | None = None  # linear axis (wavelength for a
-    # spectrum, or the cube's 1st-axis coordinate); None if not derivable
+    axis_values: np.ndarray | None = None  # linear axis (meaning unknown in
+    # general - see axis_label); None if not derivable
     axis_unit: str | None = None  # from a "units"/"unit" attr on that axis dataset
     value_unit: str | None = None  # from a "units"/"unit" attr on the dataset itself
+    axis_label: str | None = None  # from a "long_name"/"label"/"name" attr on the axis dataset
+    value_label: str | None = None  # from a "long_name"/"label"/"name" attr on the dataset itself
 
 
 _WAVELENGTH_NAMES = {"wavelength", "wavelengths", "wave", "lambda"}
@@ -117,10 +119,24 @@ def _attr_unit(obj) -> str | None:
     return None
 
 
-def _find_axis_values(group, dataset_name: str, length: int) -> tuple[np.ndarray, str | None] | None:
+def _attr_label(obj) -> str | None:
+    """A "long_name"/"label"/"name" attribute on a dataset, if present and
+    non-empty - a human name for what the dataset actually represents
+    (HDF5 has no equivalent of FITS's CTYPE/BTYPE, so a cube's or a
+    spectrum's axis is never assumed to be "Wavelength" without one of
+    these)."""
+    for key in ("long_name", "label", "name", "Long_name", "Label", "Name"):
+        if key in obj.attrs:
+            text = _stringify_attr(obj.attrs[key]).strip()
+            if text:
+                return text
+    return None
+
+
+def _find_axis_values(group, dataset_name: str, length: int) -> tuple[np.ndarray, str | None, str | None] | None:
     """A sibling 1D dataset that looks like a wavelength/spectral axis by
     name and matches the given length (a spectrum's length, or a cube's
-    number of planes), along with its unit if it has one."""
+    number of planes), along with its unit and label if it has them."""
     for key in group.keys():
         if key == dataset_name or key.lower() not in _WAVELENGTH_NAMES:
             continue
@@ -130,7 +146,7 @@ def _find_axis_values(group, dataset_name: str, length: int) -> tuple[np.ndarray
             continue
         if isinstance(candidate, h5py.Dataset) and candidate.ndim == 1 and candidate.shape[0] == length:
             values = np.asarray(candidate[()], dtype=np.float64)
-            return values, _attr_unit(candidate)
+            return values, _attr_unit(candidate), _attr_label(candidate)
     return None
 
 
@@ -166,6 +182,7 @@ def load_dataset(path: str, dataset_path: str) -> Hdf5Data:
 
             axis_values = None
             axis_unit = None
+            axis_label = None
             if kind in ("spectrum", "cube"):
                 if "/" in key:
                     group_name, dataset_name = key.rsplit("/", 1)
@@ -174,8 +191,9 @@ def load_dataset(path: str, dataset_path: str) -> Hdf5Data:
                     group, dataset_name = f, key
                 found = _find_axis_values(group, dataset_name, array.shape[0])
                 if found is not None:
-                    axis_values, axis_unit = found
+                    axis_values, axis_unit, axis_label = found
             value_unit = _attr_unit(dset)
+            value_label = _attr_label(dset)
 
             return Hdf5Data(
                 path=path,
@@ -187,6 +205,8 @@ def load_dataset(path: str, dataset_path: str) -> Hdf5Data:
                 axis_values=axis_values,
                 axis_unit=axis_unit,
                 value_unit=value_unit,
+                axis_label=axis_label,
+                value_label=value_label,
             )
     except Hdf5LoadError:
         raise

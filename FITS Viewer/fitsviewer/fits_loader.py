@@ -36,10 +36,12 @@ class FitsData:
     kind: str  # "image", "spectrum" or "cube"
     array: np.ndarray  # 1D for a spectrum, 2D for an image, 3D for a cube
     header: fits.Header
-    axis_values: np.ndarray | None = None  # linear WCS axis (wavelength for
-    # a spectrum, or the cube's 3rd-axis coordinate); None if not derivable
+    axis_values: np.ndarray | None = None  # linear WCS axis (could be
+    # wavelength, frequency, velocity... - see axis_label); None if not derivable
     axis_unit: str | None = None  # from CUNIT1 (spectrum) / CUNIT3 (cube)
     value_unit: str | None = None  # from BUNIT
+    axis_label: str | None = None  # human name for the axis, from CTYPE1/CTYPE3
+    value_label: str | None = None  # human name for the data, from BTYPE
 
 
 def _classify(data, header) -> str:
@@ -93,6 +95,35 @@ def _header_unit(header, key: str) -> str | None:
     return text or None
 
 
+#: CTYPEn's first token (before any "-ALGO" suffix, e.g. "WAVE-LOG") maps
+#: to a human axis name. FITS axes aren't always wavelength - they can be
+#: frequency, velocity, Stokes parameter, time... so this is used instead
+#: of ever assuming "Wavelength" by default.
+_CTYPE_LABELS = {
+    "WAVE": "Wavelength",
+    "AWAV": "Wavelength",
+    "FREQ": "Frequency",
+    "ENER": "Energy",
+    "VELO": "Velocity",
+    "VRAD": "Velocity",
+    "VOPT": "Velocity",
+    "ZOPT": "Redshift",
+    "STOKES": "Stokes parameter",
+    "TIME": "Time",
+}
+
+
+def _axis_label(header, axis_num: int) -> str | None:
+    """A human label for an axis derived from CTYPEn, e.g. "WAVE-LOG" ->
+    "Wavelength", falling back to the raw CTYPE text for an unrecognized
+    one, or None if the keyword is absent entirely."""
+    raw = _header_unit(header, f"CTYPE{axis_num}")
+    if raw is None:
+        return None
+    key = raw.split("-")[0].strip().upper()
+    return _CTYPE_LABELS.get(key, raw.replace("-", " ").strip().title())
+
+
 def _linear_axis(header, axis_num: int, length: int) -> np.ndarray | None:
     """A simple linear axis from CRVALn/CDELTn/CRPIXn - the classic FITS
     WCS convention for a single axis (n=1 for a 1D spectrum, n=3 for a
@@ -139,13 +170,17 @@ def load_hdu(path: str, index: int) -> FitsData:
 
             axis_values = None
             axis_unit = None
+            axis_label = None
             if kind == "spectrum":
                 axis_values = _linear_axis(header, 1, array.shape[0])
                 axis_unit = _header_unit(header, "CUNIT1")
+                axis_label = _axis_label(header, 1)
             elif kind == "cube":
                 axis_values = _linear_axis(header, 3, array.shape[0])
                 axis_unit = _header_unit(header, "CUNIT3")
+                axis_label = _axis_label(header, 3)
             value_unit = _header_unit(header, "BUNIT")
+            value_label = _header_unit(header, "BTYPE")
 
             return FitsData(
                 path=path,
@@ -157,6 +192,8 @@ def load_hdu(path: str, index: int) -> FitsData:
                 axis_values=axis_values,
                 axis_unit=axis_unit,
                 value_unit=value_unit,
+                axis_label=axis_label,
+                value_label=value_label,
             )
     except FitsLoadError:
         raise

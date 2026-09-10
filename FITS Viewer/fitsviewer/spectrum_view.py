@@ -70,9 +70,9 @@ class SpectrumView(QWidget):
         self,
         flux: np.ndarray,
         x_values: np.ndarray | None,
-        x_label: str = "Wavelength",
+        x_label: str = "Axis value",
         x_unit: str | None = None,
-        y_label: str = "Flux",
+        y_label: str = "Value",
         y_unit: str | None = None,
         index_label: str = "Pixel",
     ) -> None:
@@ -102,9 +102,9 @@ class SpectrumView(QWidget):
         x_values: np.ndarray | None,
         label: str,
         color: str,
-        x_label: str = "Wavelength",
+        x_label: str = "Axis value",
         x_unit: str | None = None,
-        y_label: str = "Flux",
+        y_label: str = "Value",
         y_unit: str | None = None,
         index_label: str = "Pixel",
     ) -> None:

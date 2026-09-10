@@ -7,6 +7,7 @@ entirely - independently of every other panel."""
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 import numpy as np
 import pyqtgraph as pg
@@ -41,6 +42,16 @@ def _file_kind(path: str) -> str | None:
     if lower.endswith(HDF5_EXTENSIONS):
         return "hdf5"
     return None
+
+
+@dataclass
+class SpectrumResult:
+    flux: np.ndarray
+    axis_values: np.ndarray | None
+    axis_unit: str | None
+    value_unit: str | None
+    axis_label: str | None
+    value_label: str | None
 
 
 class ComparePanel(QWidget):
@@ -285,17 +296,30 @@ class ComparePanel(QWidget):
         self._hline.setVisible(True)
         self.data_changed.emit()
 
-    def spectrum(self) -> tuple[np.ndarray, np.ndarray | None, str | None, str | None] | None:
-        """(flux, axis_values, axis_unit, value_unit) for the currently
-        selected pixel (a cube) or the whole array (a plain 1D spectrum
-        file); None if there's nothing to plot yet (no file, or a cube
-        with no pixel selected, or a plain 2D image with no spectral
-        axis at all)."""
+    def spectrum(self) -> "SpectrumResult | None":
+        """The spectrum at the currently selected pixel (a cube) or the
+        whole array (a plain 1D spectrum file); None if there's nothing
+        to plot yet (no file, or a cube with no pixel selected, or a
+        plain 2D image with no spectral axis at all)."""
         if self.data is None:
             return None
         if self.data.kind == "cube" and self._selected_pixel is not None:
             row, col = self._selected_pixel
-            return self.data.array[:, row, col], self.data.axis_values, self.data.axis_unit, self.data.value_unit
+            return SpectrumResult(
+                flux=self.data.array[:, row, col],
+                axis_values=self.data.axis_values,
+                axis_unit=self.data.axis_unit,
+                value_unit=self.data.value_unit,
+                axis_label=self.data.axis_label,
+                value_label=self.data.value_label,
+            )
         if self.data.kind == "spectrum":
-            return self.data.array, self.data.axis_values, self.data.axis_unit, self.data.value_unit
+            return SpectrumResult(
+                flux=self.data.array,
+                axis_values=self.data.axis_values,
+                axis_unit=self.data.axis_unit,
+                value_unit=self.data.value_unit,
+                axis_label=self.data.axis_label,
+                value_label=self.data.value_label,
+            )
         return None

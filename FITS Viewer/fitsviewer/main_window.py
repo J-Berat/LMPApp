@@ -215,11 +215,18 @@ class MainWindow(QMainWindow):
             self.image_view.set_array(data.array)
             self.stack.setCurrentWidget(self.image_view)
         elif data.kind == "cube":
-            self.cube_view.set_cube(data.array, data.axis_values, data.axis_unit, data.value_unit)
+            self.cube_view.set_cube(
+                data.array, data.axis_values, data.axis_unit, data.value_unit, data.axis_label, data.value_label
+            )
             self.stack.setCurrentWidget(self.cube_view)
         else:
             self.spectrum_view.set_spectrum(
-                data.array, data.axis_values, x_unit=data.axis_unit, y_unit=data.value_unit
+                data.array,
+                data.axis_values,
+                x_label=data.axis_label or "Axis value",
+                x_unit=data.axis_unit,
+                y_label=data.value_label or "Value",
+                y_unit=data.value_unit,
             )
             self.stack.setCurrentWidget(self.spectrum_view)
 

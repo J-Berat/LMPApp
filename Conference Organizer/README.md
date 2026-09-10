@@ -28,3 +28,28 @@ local file the first time you launch the app — nothing to configure.
 These installer files are built and published automatically for every new
 release (see `.github/workflows/build.yml` at the repository root) —
 there is never any compiling to do yourself just to use the application.
+
+## Building from source
+
+If you want to build the app yourself from the current code instead of
+waiting for a released version:
+
+1. Make sure Python 3.10+ is installed.
+2. Open a terminal in this folder and set up a virtual environment
+   (skip this step if you already have one):
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt pyinstaller
+   ```
+3. Build the app for your system (run from this folder, not from
+   inside `scripts/`):
+   - **macOS**: `bash scripts/build_mac.sh`
+   - **Windows**: `scripts\build_windows.bat`
+   - **Linux**: `bash scripts/build_linux.sh`
+4. The application is created inside the `dist/` folder. On macOS,
+   install it with:
+   ```bash
+   cp -R "dist/Conference Organizer.app" /Applications/
+   xattr -cr "/Applications/Conference Organizer.app"
+   ```

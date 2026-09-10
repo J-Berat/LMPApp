@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from .db import ConferenceDB, Session, add_one_month
 from .dialogs import SpeakerDialog, SessionDialog
-from .pdf_export import export_book_of_abstracts, ExportError
+from .pdf_export import export_book_of_abstracts, export_name_badges, ExportError
 from .calendar_tab import CalendarTab
 from .csv_io import export_speakers_csv, import_speakers_csv, export_sessions_csv, import_sessions_csv
 from .ical_export import export_session_ics, export_schedule_ics
@@ -59,11 +59,13 @@ class SpeakersTab(QWidget):
         add_btn = QPushButton("Add speaker…")
         edit_btn = QPushButton("Edit…")
         remove_btn = QPushButton("Delete speaker")
+        badges_btn = QPushButton("Export Name Badges…")
         export_csv_btn = QPushButton("Export CSV…")
         import_csv_btn = QPushButton("Import CSV…")
         add_btn.clicked.connect(self.add_speaker)
         edit_btn.clicked.connect(self.edit_selected)
         remove_btn.clicked.connect(self.remove_selected)
+        badges_btn.clicked.connect(self.export_badges)
         export_csv_btn.clicked.connect(self.export_csv)
         import_csv_btn.clicked.connect(self.import_csv)
 
@@ -72,6 +74,7 @@ class SpeakersTab(QWidget):
         buttons.addWidget(edit_btn)
         buttons.addWidget(remove_btn)
         buttons.addStretch(1)
+        buttons.addWidget(badges_btn)
         buttons.addWidget(import_csv_btn)
         buttons.addWidget(export_csv_btn)
 
@@ -162,6 +165,22 @@ class SpeakersTab(QWidget):
         if reply == QMessageBox.Yes:
             self.db.delete_speaker(speaker_id)
             self.refresh()
+
+    def export_badges(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Choose a name and location for the badge sheet", "name_badges.pdf", "PDF (*.pdf)"
+        )
+        if not path:
+            return
+        try:
+            export_name_badges(self.db.list_speakers(), path)
+        except ExportError as exc:
+            QMessageBox.warning(self, "Cannot export", str(exc))
+            return
+        except Exception as exc:  # pragma: no cover - safety net for the UI
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        QMessageBox.information(self, "Export complete", f"File created:\n{path}")
 
     def export_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export speakers to CSV", "speakers.csv", "CSV (*.csv)")
@@ -420,13 +439,22 @@ class SessionsTab(QWidget):
         title, ok = QInputDialog.getText(self, "Program title", "Title for the program page:", text="Program")
         if not ok:
             return
+        qr_url, ok = QInputDialog.getText(
+            self,
+            "QR code (optional)",
+            "URL of the online program to encode as a QR code\n(leave blank to skip):",
+        )
+        if not ok:
+            return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export program to an HTML page", "program.html", "HTML (*.html)"
         )
         if not path:
             return
         try:
-            export_program_html(self.db.list_sessions(), path, title=title.strip() or "Program")
+            export_program_html(
+                self.db.list_sessions(), path, title=title.strip() or "Program", qr_url=qr_url.strip()
+            )
         except Exception as exc:  # pragma: no cover - safety net for the UI
             QMessageBox.critical(self, "Export failed", str(exc))
             return

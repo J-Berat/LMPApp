@@ -42,8 +42,21 @@ def _even(n: int) -> int:
     return n if n % 2 == 0 else n + 1
 
 
-def export_mp4(image_paths: list[str], output_path: str, settings: GIFSettings) -> None:
-    """Export the images as an MP4 video (H.264)."""
+def export_mp4(
+    image_paths: list[str],
+    output_path: str,
+    settings: GIFSettings,
+    frame_delays: list[int] | None = None,
+) -> None:
+    """Export the images as an MP4 video (H.264).
+
+    A video encodes at one fixed frame rate (settings.fps, from
+    settings.frame_delay_ms), unlike a GIF/WebP which can hold each
+    frame for its own duration. `frame_delays`, when given, approximates
+    per-frame overrides by repeating a frame enough times at that fixed
+    rate to match its held duration - e.g. a frame held for 3x as long
+    as settings.frame_delay_ms is written 3 times in a row.
+    """
     if not image_paths:
         raise ExportError("Add at least one image before exporting.")
 
@@ -88,7 +101,11 @@ def export_mp4(image_paths: list[str], output_path: str, settings: GIFSettings) 
         output_params=["-movflags", "+faststart"],
     )
     try:
-        for arr in frames:
-            writer.append_data(arr)
+        for i, arr in enumerate(frames):
+            repeat = 1
+            if frame_delays is not None and i < len(frame_delays):
+                repeat = max(1, round(frame_delays[i] / 1000.0 * fps))
+            for _ in range(repeat):
+                writer.append_data(arr)
     finally:
         writer.close()

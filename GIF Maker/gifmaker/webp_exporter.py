@@ -12,8 +12,17 @@ from .model import GIFSettings
 from .gif_exporter import _load_and_prepare, ExportError
 
 
-def export_webp(image_paths: list[str], output_path: str, settings: GIFSettings) -> None:
+def export_webp(
+    image_paths: list[str],
+    output_path: str,
+    settings: GIFSettings,
+    frame_delays: list[int] | None = None,
+) -> None:
     """Export the images as an animated WebP file.
+
+    `frame_delays`, when given, is one delay in milliseconds per frame,
+    for a sequence with per-frame overrides; otherwise every frame uses
+    settings.frame_delay_ms.
 
     Raises ExportError if the image list is empty.
     """
@@ -22,12 +31,13 @@ def export_webp(image_paths: list[str], output_path: str, settings: GIFSettings)
 
     frames = [_load_and_prepare(p, settings).convert("RGBA") for p in image_paths]
 
+    duration = frame_delays if frame_delays is not None else settings.frame_delay_ms
     frames[0].save(
         output_path,
         format="WEBP",
         save_all=True,
         append_images=frames[1:],
-        duration=settings.frame_delay_ms,
+        duration=duration,
         loop=settings.loop_count,
         quality=80,
         method=4,

@@ -5,7 +5,9 @@ the app. Complements the Book of Abstracts PDF: this is a schedule
 
 from __future__ import annotations
 
+import base64
 import html
+import io
 from collections import defaultdict
 from datetime import datetime
 
@@ -22,6 +24,24 @@ def _format_day_header(date_str: str) -> str:
 
 def _esc(text: str) -> str:
     return html.escape(text or "")
+
+
+def _qr_data_uri(url: str) -> str | None:
+    """A self-contained "data:image/png;base64,..." QR code for `url`,
+    or None if `url` is blank or the optional `qrcode` package isn't
+    installed - the program export works fine either way, just without
+    the QR code."""
+    if not url.strip():
+        return None
+    try:
+        import qrcode
+    except ImportError:
+        return None
+    img = qrcode.make(url.strip(), box_size=6, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def _session_row(s: Session) -> str:
@@ -50,10 +70,14 @@ def _session_row(s: Session) -> str:
     )
 
 
-def export_program_html(sessions: list[Session], path: str, title: str = "Program") -> None:
+def export_program_html(sessions: list[Session], path: str, title: str = "Program", qr_url: str = "") -> None:
     """Write a single self-contained HTML file listing every session,
     grouped by day. No external resources - safe to open, host or attach
-    to an email as-is."""
+    to an email as-is.
+
+    If `qr_url` is given, a QR code linking to it (e.g. where you plan to
+    host this page online) is embedded at the top of the page, so a
+    printed copy can be scanned straight to the online program."""
     by_date: dict[str, list[Session]] = defaultdict(list)
     undated: list[Session] = []
     for s in sessions:
@@ -80,6 +104,16 @@ def export_program_html(sessions: list[Session], path: str, title: str = "Progra
 
     body = "".join(day_blocks) if day_blocks else '<p class="empty">No sessions yet.</p>'
 
+    qr_uri = _qr_data_uri(qr_url)
+    qr_block = ""
+    if qr_uri:
+        qr_block = (
+            '<div class="qr-block">'
+            f'<img src="{qr_uri}" alt="QR code to the online program" width="120" height="120">'
+            f'<p>Scan for the online program<br><a href="{_esc(qr_url.strip())}">{_esc(qr_url.strip())}</a></p>'
+            '</div>'
+        )
+
     html_doc = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -103,9 +137,13 @@ def export_program_html(sessions: list[Session], path: str, title: str = "Progra
             padding: 2px 8px; border-radius: 10px; margin-left: 6px; }}
   .badge.cancelled {{ background: #f8c9c9; color: #7a1f1f; }}
   .empty {{ color: #666; }}
+  .qr-block {{ float: right; text-align: center; margin: 0 0 16px 16px; font-size: 12px; color: #555; }}
+  .qr-block img {{ display: block; margin: 0 auto 4px; border: 1px solid #ddd; padding: 4px; }}
+  .qr-block a {{ color: #147a8c; word-break: break-all; }}
 </style>
 </head>
 <body>
+{qr_block}
 <h1>{_esc(title)}</h1>
 <p class="subtitle">Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
 {body}

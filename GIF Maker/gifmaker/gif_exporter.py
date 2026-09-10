@@ -31,8 +31,18 @@ def _load_and_prepare(path: str, settings: GIFSettings) -> Image.Image:
     return img
 
 
-def export_gif(image_paths: list[str], output_path: str, settings: GIFSettings) -> None:
+def export_gif(
+    image_paths: list[str],
+    output_path: str,
+    settings: GIFSettings,
+    frame_delays: list[int] | None = None,
+) -> None:
     """Export the images as an animated GIF.
+
+    `frame_delays`, when given, is one delay in milliseconds per frame
+    (Pillow accepts a list here just like a single duration), for a
+    sequence with per-frame overrides; otherwise every frame uses
+    settings.frame_delay_ms.
 
     Raises ExportError if the image list is empty.
     """
@@ -46,12 +56,13 @@ def export_gif(image_paths: list[str], output_path: str, settings: GIFSettings) 
     # A shared palette avoids color flicker between frames.
     converted = [f.convert("P", palette=Image.ADAPTIVE, colors=colors, dither=dither) for f in frames]
 
+    duration = frame_delays if frame_delays is not None else settings.frame_delay_ms
     converted[0].save(
         output_path,
         format="GIF",
         save_all=True,
         append_images=converted[1:],
-        duration=settings.frame_delay_ms,
+        duration=duration,
         loop=settings.loop_count,
         disposal=2,
         optimize=False,

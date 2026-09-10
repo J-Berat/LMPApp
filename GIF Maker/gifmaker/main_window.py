@@ -33,12 +33,14 @@ from PySide6.QtWidgets import (
     QMenu,
     QStatusBar,
     QProgressDialog,
+    QInputDialog,
 )
 
 from .model import GIFMakerModel, GIFSettings
 from .gif_exporter import export_gif, ExportError
 from .video_exporter import export_mp4
 from .webp_exporter import export_webp
+from .size_estimate import estimate_export_size
 from .video_import_dialog import VideoImportDialog
 from .batch_export_dialog import BatchExportDialog
 from .crop_widget import CropDialog, apply_crop_to_images
@@ -111,7 +113,7 @@ class PreviewWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._paths: list[str] = []
-        self._delay_ms = 200
+        self._delays: list[int] = []  # one per path, parallel list
         self._index = 0
         self._playing = True
 
@@ -142,13 +144,16 @@ class PreviewWidget(QWidget):
         self._playing = not self._playing
         self.play_button.setText("⏸ Pause" if self._playing else "▶ Play")
         if self._playing:
-            self.timer.start(self._delay_ms)
+            self.timer.start(self._current_delay())
         else:
             self.timer.stop()
 
-    def set_sequence(self, paths: list[str], delay_ms: int) -> None:
+    def set_sequence(self, paths: list[str], delays: list[int]) -> None:
+        """`delays` is one delay in milliseconds per path (e.g. from
+        GIFMakerModel.effective_frame_delays()), so a frame with a custom
+        duration override previews at its own speed, not just the global one."""
         self._paths = paths
-        self._delay_ms = max(20, delay_ms)
+        self._delays = [max(20, d) for d in delays] if delays else []
         self._index = 0
         self.timer.stop()
         if not paths:
@@ -158,13 +163,20 @@ class PreviewWidget(QWidget):
             return
         self._show_current_frame()
         if self._playing and len(paths) > 1:
-            self.timer.start(self._delay_ms)
+            self.timer.start(self._current_delay())
+
+    def _current_delay(self) -> int:
+        if not self._delays:
+            return 200
+        return self._delays[self._index % len(self._delays)]
 
     def _advance_frame(self) -> None:
         if not self._paths:
             return
         self._index = (self._index + 1) % len(self._paths)
         self._show_current_frame()
+        if self._playing:
+            self.timer.start(self._current_delay())
 
     def _show_current_frame(self) -> None:
         path = self._paths[self._index]
@@ -428,27 +440,63 @@ class ExportThread(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, kind: str, paths: list[str], output_path: str, settings, parent=None) -> None:
+    def __init__(
+        self,
+        kind: str,
+        paths: list[str],
+        output_path: str,
+        settings,
+        frame_delays: list[int] | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.kind = kind
         self.paths = paths
         self.output_path = output_path
         self.settings = settings
+        self.frame_delays = frame_delays
 
     def run(self) -> None:
         try:
             if self.kind == "gif":
-                export_gif(self.paths, self.output_path, self.settings)
+                export_gif(self.paths, self.output_path, self.settings, self.frame_delays)
             elif self.kind == "webp":
-                export_webp(self.paths, self.output_path, self.settings)
+                export_webp(self.paths, self.output_path, self.settings, self.frame_delays)
             else:
-                export_mp4(self.paths, self.output_path, self.settings)
+                export_mp4(self.paths, self.output_path, self.settings, self.frame_delays)
         except ExportError as exc:
             self.failed.emit(str(exc))
         except Exception as exc:  # pragma: no cover - safety net for the UI
             self.failed.emit(f"Export failed: {exc}")
         else:
             self.finished_ok.emit(self.output_path)
+
+
+class SizeEstimateThread(QThread):
+    """Estimates the output size for gif/webp/mp4 in a background thread
+    so a size-estimate request never freezes the UI."""
+
+    finished_ok = Signal(dict)
+
+    def __init__(
+        self,
+        paths: list[str],
+        frame_delays: list[int] | None,
+        settings,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.paths = paths
+        self.frame_delays = frame_delays
+        self.settings = settings
+
+    def run(self) -> None:
+        results: dict[str, int | None] = {}
+        for kind in ("gif", "webp", "mp4"):
+            results[kind] = estimate_export_size(
+                self.paths, self.frame_delays, self.settings, kind
+            )
+        self.finished_ok.emit(results)
 
 
 class MainWindow(QMainWindow):
@@ -486,9 +534,11 @@ class MainWindow(QMainWindow):
 
         bottom_buttons_row = QHBoxLayout()
         self.crop_button = QPushButton("Crop…")
+        self.reverse_button = QPushButton("Reverse order")
         self.remove_button = QPushButton("Remove")
         self.clear_button = QPushButton("Clear all")
         bottom_buttons_row.addWidget(self.crop_button)
+        bottom_buttons_row.addWidget(self.reverse_button)
         bottom_buttons_row.addWidget(self.remove_button)
         bottom_buttons_row.addWidget(self.clear_button)
         left_layout.addLayout(bottom_buttons_row)
@@ -504,6 +554,12 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right)
         self.settings_panel = SettingsPanel()
         right_layout.addWidget(self.settings_panel)
+
+        self.estimate_size_button = QPushButton("Estimate file sizes")
+        self.size_estimate_label = QLabel("")
+        self.size_estimate_label.setWordWrap(True)
+        right_layout.addWidget(self.estimate_size_button)
+        right_layout.addWidget(self.size_estimate_label)
 
         self.export_gif_button = QPushButton("Export as GIF…")
         self.export_mp4_button = QPushButton("Export as MP4…")
@@ -533,6 +589,7 @@ class MainWindow(QMainWindow):
         self.add_button.clicked.connect(self._choose_files)
         self.import_video_button.clicked.connect(self._choose_video)
         self.crop_button.clicked.connect(self._open_crop_tool)
+        self.reverse_button.clicked.connect(self.model.reverse_images)
         self.remove_button.clicked.connect(self._remove_selected)
         self.clear_button.clicked.connect(self._clear_all)
         self.batch_export_button.clicked.connect(self._open_batch_export)
@@ -540,6 +597,7 @@ class MainWindow(QMainWindow):
         self.export_gif_button.clicked.connect(lambda: self._export("gif"))
         self.export_mp4_button.clicked.connect(lambda: self._export("mp4"))
         self.export_webp_button.clicked.connect(lambda: self._export("webp"))
+        self.estimate_size_button.clicked.connect(self._estimate_sizes)
         self.model.images_changed.connect(self._refresh_list)
         self.model.images_changed.connect(self._refresh_preview)
         self.model.settings_changed.connect(self._refresh_preview)
@@ -633,11 +691,36 @@ class MainWindow(QMainWindow):
         item = self.list_widget.itemAt(pos)
         if item is None:
             return
+        image_id = item.data(Qt.UserRole)
         menu = QMenu(self)
+        duration_action = QAction("Set custom duration…", self)
+        duration_action.triggered.connect(lambda: self._set_custom_duration(image_id))
+        menu.addAction(duration_action)
+        current = next((i for i in self.model.images if i.id == image_id), None)
+        if current is not None and current.delay_ms is not None:
+            clear_action = QAction("Clear custom duration", self)
+            clear_action.triggered.connect(lambda: self.model.set_frame_delay(image_id, None))
+            menu.addAction(clear_action)
         remove_action = QAction("Remove", self)
-        remove_action.triggered.connect(lambda: self.model.remove_images([item.data(Qt.UserRole)]))
+        remove_action.triggered.connect(lambda: self.model.remove_images([image_id]))
         menu.addAction(remove_action)
         menu.exec(self.list_widget.mapToGlobal(pos))
+
+    def _set_custom_duration(self, image_id: str) -> None:
+        current = next((i for i in self.model.images if i.id == image_id), None)
+        if current is None:
+            return
+        start_value = current.delay_ms if current.delay_ms is not None else self.model.settings.frame_delay_ms
+        value, ok = QInputDialog.getInt(
+            self,
+            "Custom frame duration",
+            "Duration for this frame, in milliseconds\n(overrides the global delay above):",
+            start_value,
+            20,
+            60000,
+        )
+        if ok:
+            self.model.set_frame_delay(image_id, value)
 
     def _sync_order_from_widget(self) -> None:
         ordered_ids = [
@@ -651,7 +734,10 @@ class MainWindow(QMainWindow):
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
         for item in self.model.images:
-            list_item = QListWidgetItem(item.filename)
+            text = item.filename
+            if item.delay_ms is not None:
+                text += f"  ({item.delay_ms} ms)"
+            list_item = QListWidgetItem(text)
             list_item.setData(Qt.UserRole, item.id)
             pixmap = QPixmap(item.path)
             if not pixmap.isNull():
@@ -666,7 +752,7 @@ class MainWindow(QMainWindow):
         self.settings_panel.apply_to(self.model)
 
     def _refresh_preview(self) -> None:
-        self.preview.set_sequence(self.model.effective_image_paths(), self.model.settings.frame_delay_ms)
+        self.preview.set_sequence(self.model.effective_image_paths(), self.model.effective_frame_delays())
 
     # -- Export -----------------------------------------------------------------------
 
@@ -698,7 +784,7 @@ class MainWindow(QMainWindow):
         self._progress.show()
 
         self._export_thread = ExportThread(
-            kind, self.model.effective_image_paths(), path, self.model.settings, self
+            kind, self.model.effective_image_paths(), path, self.model.settings, self.model.effective_frame_delays(), self
         )
         self._export_thread.finished_ok.connect(self._on_export_success)
         self._export_thread.failed.connect(self._on_export_failed)
@@ -714,6 +800,45 @@ class MainWindow(QMainWindow):
         if self._progress:
             self._progress.close()
         QMessageBox.critical(self, "Export failed", message)
+
+
+    def _estimate_sizes(self) -> None:
+        if not self.model.images:
+            QMessageBox.warning(
+                self, "Cannot estimate", "Add at least one image before estimating a size."
+            )
+            return
+
+        self.estimate_size_button.setEnabled(False)
+        self.size_estimate_label.setText("Estimating…")
+
+        self._size_estimate_thread = SizeEstimateThread(
+            self.model.effective_image_paths(),
+            self.model.effective_frame_delays(),
+            self.model.settings,
+            self,
+        )
+        self._size_estimate_thread.finished_ok.connect(self._on_size_estimated)
+        self._size_estimate_thread.start()
+
+    def _on_size_estimated(self, results: dict) -> None:
+        self.estimate_size_button.setEnabled(True)
+        parts = []
+        for kind, label in (("gif", "GIF"), ("webp", "WebP"), ("mp4", "MP4")):
+            size = results.get(kind)
+            parts.append(f"{label}: {self._format_size(size)}")
+        self.size_estimate_label.setText("Estimated size — " + "   ".join(parts))
+
+    @staticmethod
+    def _format_size(num_bytes: int | None) -> str:
+        if num_bytes is None:
+            return "n/a"
+        value = float(num_bytes)
+        for unit in ("B", "KB", "MB", "GB"):
+            if value < 1024 or unit == "GB":
+                return f"~{value:.0f} {unit}" if unit == "B" else f"~{value:.1f} {unit}"
+            value /= 1024
+        return f"~{value:.1f} GB"
 
 
 def run() -> None:

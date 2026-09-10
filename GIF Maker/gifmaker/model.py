@@ -15,6 +15,10 @@ class ImageItem:
 
     path: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # Per-frame delay override, in milliseconds. None means "use the
+    # sequence's global frame_delay_ms" - only frames the user explicitly
+    # customized (e.g. to hold the last frame longer) carry their own value.
+    delay_ms: int | None = None
 
     @property
     def filename(self) -> str:
@@ -55,13 +59,15 @@ class GIFSettings:
         return 1000.0 / self.frame_delay_ms
 
 
-def build_ping_pong_sequence(paths: list[str]) -> list[str]:
-    """Forward then backward, without repeating the two end frames (which
+def build_ping_pong_sequence(items: list) -> list:
+    """Forward then backward, without repeating the two end items (which
     would create a visible stutter): [a,b,c,d] -> [a,b,c,d,c,b]. A no-op
-    for sequences of fewer than 2 frames."""
-    if len(paths) < 2:
-        return list(paths)
-    return list(paths) + list(reversed(paths))[1:-1]
+    for sequences of fewer than 2 items. Generic over the item type so it
+    can apply the same forward/backward pattern to a list of paths or a
+    parallel list of per-frame delays."""
+    if len(items) < 2:
+        return list(items)
+    return list(items) + list(reversed(items))[1:-1]
 
 
 class GIFMakerModel(QObject):
@@ -111,6 +117,20 @@ class GIFMakerModel(QObject):
         self.images.insert(to_index, item)
         self.images_changed.emit()
 
+    def reverse_images(self) -> None:
+        if len(self.images) > 1:
+            self.images.reverse()
+            self.images_changed.emit()
+
+    def set_frame_delay(self, image_id: str, delay_ms: int | None) -> None:
+        """Override (or, with None, clear the override on) one frame's
+        delay. `delay_ms` of None falls back to settings.frame_delay_ms."""
+        for item in self.images:
+            if item.id == image_id:
+                item.delay_ms = delay_ms
+                self.images_changed.emit()
+                return
+
     def image_paths(self) -> list[str]:
         return [item.path for item in self.images]
 
@@ -121,6 +141,20 @@ class GIFMakerModel(QObject):
         if self.settings.ping_pong:
             paths = build_ping_pong_sequence(paths)
         return paths
+
+    def effective_frame_delays(self) -> list[int]:
+        """One delay in milliseconds per frame of effective_image_paths(),
+        in the same order - each frame's own override if it has one,
+        otherwise the sequence's global frame_delay_ms. Ping-pong applies
+        the same forward/backward duplication as effective_image_paths(),
+        so a customized frame keeps its own delay on its mirrored copy too."""
+        delays = [
+            item.delay_ms if item.delay_ms is not None else self.settings.frame_delay_ms
+            for item in self.images
+        ]
+        if self.settings.ping_pong:
+            delays = build_ping_pong_sequence(delays)
+        return delays
 
     # -- Settings -----------------------------------------------------------------------
 

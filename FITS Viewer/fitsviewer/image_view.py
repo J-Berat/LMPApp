@@ -7,7 +7,17 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QFileDialog, QMessageBox
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QComboBox,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+    QCheckBox,
+)
 
 # A light theme matches the rest of the app's plain Qt widgets instead of
 # pyqtgraph's default black plot background; row-major matches plain
@@ -33,6 +43,7 @@ class ImageView(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._array: np.ndarray | None = None
+        self._roi: pg.RectROI | None = None
 
         self.stretch_combo = QComboBox()
         self.stretch_combo.addItems(list(STRETCHES.keys()))
@@ -84,6 +95,21 @@ class ImageView(QWidget):
         zoom_row.addStretch(1)
         zoom_row.addWidget(self.export_button)
 
+        # A draggable/resizable rectangle showing mean/std/min/max of the
+        # raw (unstretched) pixel values inside it - handy for comparing
+        # signal levels between regions without leaving the viewer.
+        self.region_stats_check = QCheckBox("Region stats")
+        self.region_stats_check.setToolTip(
+            "Draw a rectangle on the image to see mean/std/min/max of the pixels inside it"
+        )
+        self.region_stats_check.toggled.connect(self._toggle_region_stats)
+        self.region_stats_label = QLabel("")
+        self.region_stats_label.setStyleSheet("color: #444444;")
+
+        region_row = QHBoxLayout()
+        region_row.addWidget(self.region_stats_check)
+        region_row.addWidget(self.region_stats_label, 1)
+
         self.image_view = pg.ImageView()
         self.image_view.ui.roiBtn.hide()
         self.image_view.ui.menuBtn.hide()
@@ -91,6 +117,7 @@ class ImageView(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(toolbar)
         layout.addLayout(zoom_row)
+        layout.addLayout(region_row)
         layout.addWidget(self.image_view)
 
         self._apply_colormap(self.colormap_combo.currentText())
@@ -98,6 +125,8 @@ class ImageView(QWidget):
     def set_array(self, array: np.ndarray, auto_range: bool = True) -> None:
         self._array = array
         self._refresh(auto_range=auto_range)
+        if self._roi is not None:
+            self._update_region_stats()
 
     def _refresh(self, *_args, auto_range: bool = False) -> None:
         if self._array is None:
@@ -136,3 +165,46 @@ class ImageView(QWidget):
             exporter.export(path)
         except Exception as exc:
             QMessageBox.critical(self, "Export failed", f"Could not save the image: {exc}")
+
+    def _toggle_region_stats(self, checked: bool) -> None:
+        if checked:
+            if self._array is None:
+                self.region_stats_check.blockSignals(True)
+                self.region_stats_check.setChecked(False)
+                self.region_stats_check.blockSignals(False)
+                QMessageBox.information(self, "No image", "Open a file first.")
+                return
+            rows, cols = self._array.shape
+            w = max(1, cols // 4)
+            h = max(1, rows // 4)
+            x0 = (cols - w) / 2
+            y0 = (rows - h) / 2
+            # RectROI already adds a scale handle at the top-right corner
+            # by default; the body itself can be dragged to move it.
+            self._roi = pg.RectROI([x0, y0], [w, h], pen=pg.mkPen("y", width=2))
+            self._roi.sigRegionChanged.connect(self._update_region_stats)
+            self.image_view.getView().addItem(self._roi)
+            self._update_region_stats()
+        else:
+            if self._roi is not None:
+                self.image_view.getView().removeItem(self._roi)
+                self._roi = None
+            self.region_stats_label.setText("")
+
+    def _update_region_stats(self, *_args) -> None:
+        if self._roi is None or self._array is None:
+            return
+        # order=0 (nearest-neighbor) avoids blending pixel values across
+        # the ROI's edges, so the stats reflect actual pixel values.
+        region = self._roi.getArrayRegion(self._array, self.image_view.getImageItem(), order=0)
+        if region is None or region.size == 0:
+            self.region_stats_label.setText("Region is outside the image.")
+            return
+        finite = region[np.isfinite(region)]
+        if finite.size == 0:
+            self.region_stats_label.setText("No valid pixels in this region.")
+            return
+        self.region_stats_label.setText(
+            f"N={finite.size}   mean={finite.mean():.4g}   std={finite.std():.4g}   "
+            f"min={finite.min():.4g}   max={finite.max():.4g}"
+        )

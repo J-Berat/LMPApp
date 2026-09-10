@@ -70,6 +70,9 @@ class ComparePanel(QWidget):
         self.file_kind: str | None = None
         self.data = None  # FitsData or Hdf5Data for the currently selected item
         self._selected_pixel: tuple[int, int] | None = None
+        self._working_cube: np.ndarray | None = None  # data.array with the
+        # chosen line-of-sight axis moved to position 0 (a view, no copy)
+        self._los_axis: int = 0
 
         self.title_label = QLabel(f"<b>{label}</b> — no file")
 
@@ -98,6 +101,15 @@ class ComparePanel(QWidget):
         second_row.addWidget(self.lock_check)
         second_row.addStretch(1)
         second_row.addWidget(self.remove_button)
+
+        self.los_combo = QComboBox()
+        self.los_combo.currentIndexChanged.connect(self._on_los_changed)
+        los_row = QHBoxLayout()
+        los_row.addWidget(QLabel("LOS:"))
+        los_row.addWidget(self.los_combo, 1)
+        self.los_row_widget = QWidget()
+        self.los_row_widget.setLayout(los_row)
+        self.los_row_widget.setVisible(False)
 
         self.plane_slider = QSlider(Qt.Horizontal)
         self.plane_slider.setMinimum(0)
@@ -136,6 +148,7 @@ class ComparePanel(QWidget):
         layout.addWidget(self.title_label)
         layout.addLayout(top_row)
         layout.addLayout(second_row)
+        layout.addWidget(self.los_row_widget)
         layout.addWidget(self.plane_row_widget)
         layout.addWidget(self.stack, 1)
 
@@ -205,21 +218,28 @@ class ComparePanel(QWidget):
         self._hline.setVisible(False)
 
         if data.kind == "cube":
-            n_planes = data.array.shape[0]
             self.plane_row_widget.setVisible(True)
-            for widget in (self.plane_slider, self.plane_spin):
-                widget.blockSignals(True)
-                widget.setMaximum(max(n_planes - 1, 0))
-                widget.setValue(0)
-                widget.blockSignals(False)
-            self.image_view.set_array(data.array[0], auto_range=True)
+            self.los_row_widget.setVisible(True)
+            labels = data.cube_axis_labels or [None] * data.array.ndim
+            self.los_combo.blockSignals(True)
+            self.los_combo.clear()
+            for axis in range(data.array.ndim):
+                label = labels[axis]
+                self.los_combo.addItem(f"Axis {axis} ({label})" if label else f"Axis {axis}", axis)
+            self.los_combo.setCurrentIndex(0)
+            self.los_combo.blockSignals(False)
+            self._set_los_axis(0)
             self.stack.setCurrentWidget(self.image_view)
         elif data.kind == "image":
             self.plane_row_widget.setVisible(False)
+            self.los_row_widget.setVisible(False)
+            self._working_cube = None
             self.image_view.set_array(data.array, auto_range=True)
             self.stack.setCurrentWidget(self.image_view)
         else:  # spectrum: nothing 2D to show - the full curve goes straight to the shared plot
             self.plane_row_widget.setVisible(False)
+            self.los_row_widget.setVisible(False)
+            self._working_cube = None
             self.stack.setCurrentWidget(self.no_image_label)
 
         self.title_label.setText(f"<b>{self.label}</b> — {os.path.basename(self.current_path)}")
@@ -239,10 +259,39 @@ class ComparePanel(QWidget):
         self.plane_slider.blockSignals(False)
         self._show_plane(value)
 
-    def _show_plane(self, index: int) -> None:
-        if self.data is None or self.data.kind != "cube":
+    def _on_los_changed(self, combo_index: int) -> None:
+        if self.data is None or self.data.kind != "cube" or combo_index < 0:
             return
-        self.image_view.set_array(self.data.array[index], auto_range=False)
+        axis = self.los_combo.itemData(combo_index)
+        if axis is None:
+            return
+        self._set_los_axis(axis)
+
+    def _set_los_axis(self, axis: int) -> None:
+        """Move the chosen numpy axis of the cube to position 0 (a view,
+        no data copy) - mirrors CubeView's line-of-sight switching, kept
+        independent per panel so two files can be compared along
+        different physical axes."""
+        self._los_axis = axis
+        self._working_cube = np.moveaxis(self.data.array, axis, 0)
+        self._selected_pixel = None
+        self._vline.setVisible(False)
+        self._hline.setVisible(False)
+
+        n_planes = self._working_cube.shape[0]
+        for widget in (self.plane_slider, self.plane_spin):
+            widget.blockSignals(True)
+            widget.setMaximum(max(n_planes - 1, 0))
+            widget.setValue(0)
+            widget.blockSignals(False)
+
+        self.image_view.set_array(self._working_cube[0], auto_range=True)
+        self.data_changed.emit()
+
+    def _show_plane(self, index: int) -> None:
+        if self._working_cube is None:
+            return
+        self.image_view.set_array(self._working_cube[index], auto_range=False)
 
     # -- pixel selection --
 
@@ -252,7 +301,9 @@ class ComparePanel(QWidget):
         if self.data is None:
             return None
         if self.data.kind == "cube":
-            return self.data.array.shape[1], self.data.array.shape[2]
+            if self._working_cube is None:
+                return None
+            return self._working_cube.shape[1], self._working_cube.shape[2]
         if self.data.kind == "image":
             return self.data.array.shape
         return None
@@ -303,14 +354,18 @@ class ComparePanel(QWidget):
         plain 2D image with no spectral axis at all)."""
         if self.data is None:
             return None
-        if self.data.kind == "cube" and self._selected_pixel is not None:
+        if self.data.kind == "cube" and self._selected_pixel is not None and self._working_cube is not None:
             row, col = self._selected_pixel
+            ndim = self.data.array.ndim
+            cube_axis_values = self.data.cube_axis_values or [None] * ndim
+            cube_axis_units = self.data.cube_axis_units or [None] * ndim
+            cube_axis_labels = self.data.cube_axis_labels or [None] * ndim
             return SpectrumResult(
-                flux=self.data.array[:, row, col],
-                axis_values=self.data.axis_values,
-                axis_unit=self.data.axis_unit,
+                flux=self._working_cube[:, row, col],
+                axis_values=cube_axis_values[self._los_axis],
+                axis_unit=cube_axis_units[self._los_axis],
                 value_unit=self.data.value_unit,
-                axis_label=self.data.axis_label,
+                axis_label=cube_axis_labels[self._los_axis],
                 value_label=self.data.value_label,
             )
         if self.data.kind == "spectrum":

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QFileDialog, QMessageBox
 
 # A light theme matches the rest of the app's plain Qt widgets instead of
 # pyqtgraph's default black plot background; row-major matches plain
@@ -71,11 +71,18 @@ class ImageView(QWidget):
         self.zoom_out_button.clicked.connect(self._zoom_out)
         self.reset_zoom_button.clicked.connect(self._reset_zoom)
 
+        self.export_button = QPushButton("Export image…")
+        self.export_button.setToolTip(
+            "Save the full image at its native resolution, with the current stretch and colormap applied"
+        )
+        self.export_button.clicked.connect(self._export_image)
+
         zoom_row = QHBoxLayout()
         zoom_row.addWidget(self.zoom_in_button)
         zoom_row.addWidget(self.zoom_out_button)
         zoom_row.addWidget(self.reset_zoom_button)
         zoom_row.addStretch(1)
+        zoom_row.addWidget(self.export_button)
 
         self.image_view = pg.ImageView()
         self.image_view.ui.roiBtn.hide()
@@ -112,3 +119,20 @@ class ImageView(QWidget):
 
     def _reset_zoom(self) -> None:
         self.image_view.getView().autoRange()
+
+    def _export_image(self) -> None:
+        if self._array is None:
+            QMessageBox.information(self, "Nothing to export", "Open a file first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export image", "", "PNG image (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        try:
+            from pyqtgraph.exporters import ImageExporter
+
+            exporter = ImageExporter(self.image_view.getImageItem())
+            exporter.export(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Could not save the image: {exc}")

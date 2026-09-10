@@ -48,6 +48,11 @@ class Hdf5Data:
     value_unit: str | None = None  # from a "units"/"unit" attr on the dataset itself
     axis_label: str | None = None  # from a "long_name"/"label"/"name" attr on the axis dataset
     value_label: str | None = None  # from a "long_name"/"label"/"name" attr on the dataset itself
+    cube_axis_values: list[np.ndarray | None] | None = None  # one entry per
+    # numpy axis (only for kind == "cube"), so any axis can be chosen as
+    # the line of sight
+    cube_axis_units: list[str | None] | None = None
+    cube_axis_labels: list[str | None] | None = None
 
 
 _WAVELENGTH_NAMES = {"wavelength", "wavelengths", "wave", "lambda"}
@@ -183,6 +188,9 @@ def load_dataset(path: str, dataset_path: str) -> Hdf5Data:
             axis_values = None
             axis_unit = None
             axis_label = None
+            cube_axis_values = None
+            cube_axis_units = None
+            cube_axis_labels = None
             if kind in ("spectrum", "cube"):
                 if "/" in key:
                     group_name, dataset_name = key.rsplit("/", 1)
@@ -192,6 +200,28 @@ def load_dataset(path: str, dataset_path: str) -> Hdf5Data:
                 found = _find_axis_values(group, dataset_name, array.shape[0])
                 if found is not None:
                     axis_values, axis_unit, axis_label = found
+                if kind == "cube":
+                    # One entry per numpy axis, matched by length against
+                    # sibling datasets - so the viewer can let the user
+                    # pick any axis as the line of sight, not just axis 0.
+                    cube_axis_values = []
+                    cube_axis_units = []
+                    cube_axis_labels = []
+                    for numpy_axis in range(array.ndim):
+                        axis_found = _find_axis_values(group, dataset_name, array.shape[numpy_axis])
+                        if axis_found is not None:
+                            values, unit, label = axis_found
+                        else:
+                            values, unit, label = None, None, None
+                        cube_axis_values.append(values)
+                        cube_axis_units.append(unit)
+                        cube_axis_labels.append(label)
+                    # Axis 0 is the default line of sight; already set in
+                    # the scalar fields above (found), kept in sync here
+                    # since Compare mode always uses axis 0.
+                    cube_axis_values[0] = axis_values
+                    cube_axis_units[0] = axis_unit
+                    cube_axis_labels[0] = axis_label
             value_unit = _attr_unit(dset)
             value_label = _attr_label(dset)
 
@@ -207,6 +237,9 @@ def load_dataset(path: str, dataset_path: str) -> Hdf5Data:
                 value_unit=value_unit,
                 axis_label=axis_label,
                 value_label=value_label,
+                cube_axis_values=cube_axis_values,
+                cube_axis_units=cube_axis_units,
+                cube_axis_labels=cube_axis_labels,
             )
     except Hdf5LoadError:
         raise

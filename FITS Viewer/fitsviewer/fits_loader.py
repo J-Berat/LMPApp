@@ -42,6 +42,11 @@ class FitsData:
     value_unit: str | None = None  # from BUNIT
     axis_label: str | None = None  # human name for the axis, from CTYPE1/CTYPE3
     value_label: str | None = None  # human name for the data, from BTYPE
+    cube_axis_values: list[np.ndarray | None] | None = None  # one entry per
+    # numpy axis (only for kind == "cube"), so any axis can be chosen as
+    # the line of sight
+    cube_axis_units: list[str | None] | None = None
+    cube_axis_labels: list[str | None] | None = None
 
 
 def _classify(data, header) -> str:
@@ -171,14 +176,30 @@ def load_hdu(path: str, index: int) -> FitsData:
             axis_values = None
             axis_unit = None
             axis_label = None
+            cube_axis_values = None
+            cube_axis_units = None
+            cube_axis_labels = None
             if kind == "spectrum":
                 axis_values = _linear_axis(header, 1, array.shape[0])
                 axis_unit = _header_unit(header, "CUNIT1")
                 axis_label = _axis_label(header, 1)
             elif kind == "cube":
-                axis_values = _linear_axis(header, 3, array.shape[0])
-                axis_unit = _header_unit(header, "CUNIT3")
-                axis_label = _axis_label(header, 3)
+                # One entry per numpy axis (numpy axis i <-> FITS axis
+                # ndim-i), so the viewer can let the user pick any axis
+                # as the line of sight instead of always assuming axis 0.
+                cube_axis_values = []
+                cube_axis_units = []
+                cube_axis_labels = []
+                for numpy_axis in range(array.ndim):
+                    fits_axis_num = array.ndim - numpy_axis
+                    cube_axis_values.append(_linear_axis(header, fits_axis_num, array.shape[numpy_axis]))
+                    cube_axis_units.append(_header_unit(header, f"CUNIT{fits_axis_num}"))
+                    cube_axis_labels.append(_axis_label(header, fits_axis_num))
+                # Axis 0 is the default line of sight; kept in the scalar
+                # fields too since Compare mode always uses axis 0.
+                axis_values = cube_axis_values[0]
+                axis_unit = cube_axis_units[0]
+                axis_label = cube_axis_labels[0]
             value_unit = _header_unit(header, "BUNIT")
             value_label = _header_unit(header, "BTYPE")
 
@@ -194,6 +215,9 @@ def load_hdu(path: str, index: int) -> FitsData:
                 value_unit=value_unit,
                 axis_label=axis_label,
                 value_label=value_label,
+                cube_axis_values=cube_axis_values,
+                cube_axis_units=cube_axis_units,
+                cube_axis_labels=cube_axis_labels,
             )
     except FitsLoadError:
         raise

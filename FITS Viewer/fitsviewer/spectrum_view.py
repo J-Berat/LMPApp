@@ -8,7 +8,16 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QDoubleValidator
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+)
 
 #: Default palette for successive curves added via set_curve() without an
 #: explicit color - the first entry matches the single-curve default so
@@ -60,8 +69,22 @@ class SpectrumView(QWidget):
         limits_row.addWidget(self.auto_button)
         limits_row.addStretch(1)
 
+        self.export_csv_button = QPushButton("Export CSV…")
+        self.export_csv_button.setToolTip("Save the plotted values (axis + data) to a CSV file")
+        self.export_csv_button.clicked.connect(self._export_csv)
+
+        self.export_image_button = QPushButton("Export image…")
+        self.export_image_button.setToolTip("Save the plot as a PNG image")
+        self.export_image_button.clicked.connect(self._export_image)
+
+        export_row = QHBoxLayout()
+        export_row.addWidget(self.export_csv_button)
+        export_row.addWidget(self.export_image_button)
+        export_row.addStretch(1)
+
         layout = QVBoxLayout(self)
         layout.addLayout(limits_row)
+        layout.addLayout(export_row)
         layout.addWidget(self.plot_widget)
 
     # -- single-curve convenience API (the plain viewer, one cube's pixel click) --
@@ -183,6 +206,68 @@ class SpectrumView(QWidget):
             edit.clear()
             edit.blockSignals(False)
         self.plot_widget.enableAutoRange()
+
+    def _export_image(self) -> None:
+        if not self._items_by_key:
+            QMessageBox.information(self, "Nothing to export", "Nothing is plotted yet.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export plot", "", "PNG image (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        try:
+            from pyqtgraph.exporters import ImageExporter
+
+            exporter = ImageExporter(self.plot_widget.plotItem)
+            exporter.export(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Could not save the plot: {exc}")
+
+    def _export_csv(self) -> None:
+        if not self._items_by_key:
+            QMessageBox.information(self, "Nothing to export", "Nothing is plotted yet.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export data", "", "CSV file (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+
+        import csv
+
+        keys = list(self._items_by_key.keys())
+        try:
+            with open(path, "w", newline="") as f:
+                writer = csv.writer(f)
+                if len(keys) == 1:
+                    key = keys[0]
+                    x_label = self.plot_widget.getAxis("bottom").labelText or "x"
+                    y_label = self.plot_widget.getAxis("left").labelText or "y"
+                    writer.writerow([x_label, y_label])
+                    for x, y in zip(self._x_by_key[key], self._y_by_key[key]):
+                        writer.writerow([x, y])
+                else:
+                    # Compare mode: several curves, possibly different
+                    # lengths - each gets its own x/y column pair rather
+                    # than forcing a single shared x axis.
+                    header = []
+                    columns = []
+                    for key in keys:
+                        item = self._items_by_key[key]
+                        name = item.name() or key
+                        header += [f"{name} - x", f"{name} - y"]
+                        columns.append((self._x_by_key[key], self._y_by_key[key]))
+                    writer.writerow(header)
+                    max_len = max(len(x) for x, _y in columns)
+                    for i in range(max_len):
+                        row = []
+                        for x, y in columns:
+                            row.append(x[i] if i < len(x) else "")
+                            row.append(y[i] if i < len(y) else "")
+                        writer.writerow(row)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export failed", f"Could not save the data: {exc}")
 
     def _update_placeholders(self) -> None:
         """Show the combined data's current min/max as placeholder text in

@@ -216,7 +216,12 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(self.image_view)
         elif data.kind == "cube":
             self.cube_view.set_cube(
-                data.array, data.axis_values, data.axis_unit, data.value_unit, data.axis_label, data.value_label
+                data.array,
+                data.cube_axis_values,
+                data.cube_axis_units,
+                data.value_unit,
+                data.cube_axis_labels,
+                data.value_label,
             )
             self.stack.setCurrentWidget(self.cube_view)
         else:
